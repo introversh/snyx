@@ -8,7 +8,10 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=@youtube-together/api\" \"npm run dev --workspace=@youtube-together/web\"",
-    "build": "npm run build --workspaces --if-present",
+    "build:shared": "npm run build --workspace=@youtube-together/shared",
+    "build:api": "npm run build --workspace=@youtube-together/api",
+    "build:web": "npm run build --workspace=@youtube-together/web",
+    "build": "npm run build:shared && npm run build:api && npm run build:web",
     "db:up": "docker compose up -d",
     "db:migrate": "npm run db:migrate --workspace=@youtube-together/api"
   },
