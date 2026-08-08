@@ -1,0 +1,139 @@
+# ================================
+# Dependencies
+# ================================
+node_modules/
+.pnp/
+.pnp.js
+
+# ================================
+# Environment variables / secrets
+# ================================
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# ================================
+# Build output
+# ================================
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+
+# ================================
+# Vite
+# ================================
+.vite/
+
+# ================================
+# NestJS
+# ================================
+.nest/
+
+# ================================
+# Logs
+# ================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ================================
+# Coverage
+# ================================
+coverage/
+.nyc_output/
+
+# ================================
+# Testing
+# ================================
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# ================================
+# Prisma
+# ================================
+# Prisma generated client is normally ignored
+# unless your project explicitly commits it.
+node_modules/.prisma/
+node_modules/@prisma/client/
+
+# ================================
+# Database
+# ================================
+*.db
+*.sqlite
+*.sqlite3
+
+# ================================
+# Redis
+# ================================
+dump.rdb
+
+# ================================
+# Docker
+# ================================
+docker-compose.override.yml
+
+# ================================
+# OS files
+# ================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+
+# ================================
+# IDE / Editors
+# ================================
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ================================
+# Temporary files
+# ================================
+tmp/
+temp/
+.cache/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ================================
+# TypeScript
+# ================================
+*.tsbuildinfo
+
+# ================================
+# Miscellaneous
+# ================================
+*.pid
+*.seed
+*.pid.lock
+
+# ================================
+# Local uploads / generated files
+# ================================
+uploads/
+storage/
+generated/

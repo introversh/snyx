@@ -1,0 +1,178 @@
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import axios from 'axios';
+
+export interface SearchResultItem {
+  videoId: string;
+  title: string;
+  description: string;
+  thumbnail: string;
+  channelTitle: string;
+}
+
+export interface SearchResponse {
+  items: SearchResultItem[];
+  nextPageToken?: string;
+}
+
+@Injectable()
+export class YoutubeService {
+  private cache = new Map<string, SearchResponse>();
+  private readonly apiKey = process.env.YOUTUBE_API_KEY;
+
+  // A premium collection of royalty-free lofi/synthwave tracks for offline/missing key testing
+  private readonly mockSongs: SearchResultItem[] = [
+    {
+      videoId: '5qap5aO4i9A',
+      title: 'Lofi Hip Hop Radio 🌌 Beats to Relax/Study to',
+      description: 'ChilledCow lofi hip hop radio - beats to relax/study to.',
+      thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&q=80',
+      channelTitle: 'Lofi Girl',
+    },
+    {
+      videoId: 'D7aYjAp_nsU',
+      title: 'Synthwave Radio ⚡ Retro Futurism & Synth Beats',
+      description: 'Synthesizer retro wave beats to cruise to.',
+      thumbnail: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&q=80',
+      channelTitle: 'Lofi Records',
+    },
+    {
+      videoId: 'C5A2C87V-rA',
+      title: 'Deep Focus Ambient Music 🧘 Clean Instrumental Waves',
+      description: 'Beautiful synth ambient music for focusing, working, or sleeping.',
+      thumbnail: 'https://images.unsplash.com/photo-1497496273947-601e60f77e6f?w=400&q=80',
+      channelTitle: 'Ambient Waves',
+    },
+    {
+      videoId: 'tntOCGkgt98',
+      title: 'Jazz Hop Cafe Beats ☕ Cozy Afternoon Lounge',
+      description: 'Smooth jazz hop beats for relaxation.',
+      thumbnail: 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?w=400&q=80',
+      channelTitle: 'Coffee Shop Vibes',
+    },
+    {
+      videoId: 'F7X3VbZtX9g',
+      title: 'Cyberpunk Industrial Techno Mix 🤖 Future City Sounds',
+      description: 'Energetic futuristic beats.',
+      thumbnail: 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=400&q=80',
+      channelTitle: 'Synth Records',
+    }
+  ];
+
+  async search(query: string, pageToken?: string, maxResults = 10): Promise<SearchResponse> {
+    const cleanQuery = query.toLowerCase().trim();
+    const cacheKey = `${cleanQuery}_${pageToken || ''}_${maxResults}`;
+
+    if (this.cache.has(cacheKey)) {
+      console.log(`[YouTube Search] Serving cached results for: "${cleanQuery}"`);
+      return this.cache.get(cacheKey)!;
+    }
+
+    // Fallback if API key is not provided
+    if (!this.apiKey) {
+      console.warn('[YouTube Search] YOUTUBE_API_KEY is missing. Serving mock fallback results.');
+      const filtered = this.mockSongs.filter(
+        (song) =>
+          song.title.toLowerCase().includes(cleanQuery) ||
+          song.description.toLowerCase().includes(cleanQuery) ||
+          song.channelTitle.toLowerCase().includes(cleanQuery)
+      );
+      
+      const items = filtered.length > 0 ? filtered : this.mockSongs;
+      return { items };
+    }
+
+    try {
+      const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+        params: {
+          part: 'snippet',
+          q: query,
+          type: 'video',
+          key: this.apiKey,
+          maxResults,
+          pageToken,
+          videoEmbeddable: 'true', // Filter for videos that can be embedded in an iframe
+        },
+      });
+
+      const items: SearchResultItem[] = response.data.items.map((item: any) => ({
+        videoId: item.id.videoId,
+        title: item.snippet.title,
+        description: item.snippet.description,
+        thumbnail: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url || '',
+        channelTitle: item.snippet.channelTitle,
+      }));
+
+      const searchResponse: SearchResponse = {
+        items,
+        nextPageToken: response.data.nextPageToken,
+      };
+
+      // Store in cache
+      this.cache.set(cacheKey, searchResponse);
+
+      return searchResponse;
+    } catch (error) {
+      console.error('[YouTube Search] API query error:', error.message);
+      
+      // Fallback on failure or quota exceeded
+      console.warn('[YouTube Search] Serving mock fallback results due to search API error.');
+      const filtered = this.mockSongs.filter(
+        (song) =>
+          song.title.toLowerCase().includes(cleanQuery) ||
+          song.description.toLowerCase().includes(cleanQuery) ||
+          song.channelTitle.toLowerCase().includes(cleanQuery)
+      );
+      
+      const items = filtered.length > 0 ? filtered : this.mockSongs;
+      return { items };
+    }
+  }
+
+  async getVideo(videoId: string): Promise<SearchResultItem> {
+    const cleanId = videoId.trim();
+
+    if (!this.apiKey) {
+      const found = this.mockSongs.find((s) => s.videoId === cleanId);
+      if (found) return found;
+      return {
+        videoId: cleanId,
+        title: 'Pasted YouTube Video',
+        description: 'Autogenerated metadata for pasted YouTube link',
+        thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&q=80',
+        channelTitle: 'Together Guest',
+      };
+    }
+
+    try {
+      const response = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+        params: {
+          part: 'snippet',
+          id: cleanId,
+          key: this.apiKey,
+        },
+      });
+
+      const item = response.data.items?.[0];
+      if (!item) {
+        throw new HttpException('Video not found on YouTube', HttpStatus.NOT_FOUND);
+      }
+
+      return {
+        videoId: cleanId,
+        title: item.snippet.title,
+        description: item.snippet.description || '',
+        thumbnail: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url || '',
+        channelTitle: item.snippet.channelTitle,
+      };
+    } catch (error) {
+      console.error('[YouTube Search] Details API error:', error.message);
+      return {
+        videoId: cleanId,
+        title: 'Fallback Video Title',
+        description: 'Metadata fallback due to YouTube API limit/failure',
+        thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=400&q=80',
+        channelTitle: 'Together System',
+      };
+    }
+  }
+}
