@@ -24,6 +24,8 @@ interface RoomPageProps {
   onNavigate: (path: string) => void;
 }
 
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
+
 export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   const {
     roomState,
@@ -96,7 +98,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
       setIsSearching(true);
       searchTimeoutRef.current = window.setTimeout(async () => {
         try {
-          const res = await fetch(`http://localhost:3000/youtube/video/${videoId}`);
+          const res = await fetch(`${API_BASE_URL}/youtube/video/${videoId}`);
           if (res.ok) {
             const video = await res.json();
             setSearchResults([video]);
@@ -113,7 +115,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     setIsSearching(true);
     searchTimeoutRef.current = window.setTimeout(async () => {
       try {
-        const res = await fetch(`http://localhost:3000/youtube/search?q=${encodeURIComponent(searchQuery)}`);
+        const res = await fetch(`${API_BASE_URL}/youtube/search?q=${encodeURIComponent(searchQuery)}`);
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data.items);

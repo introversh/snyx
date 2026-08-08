@@ -5,6 +5,8 @@ interface LandingPageProps {
   onNavigate: (path: string) => void;
 }
 
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
+
 export default function LandingPage({ onNavigate }: LandingPageProps) {
   const [roomCode, setRoomCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -15,7 +17,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
     // Health check check to verify frontend-backend communication
     const checkHealth = async () => {
       try {
-        const response = await fetch('http://localhost:3000/health');
+        const response = await fetch(`${API_BASE_URL}/health`);
         if (response.ok) {
           setApiStatus('online');
         } else {
@@ -34,7 +36,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:3000/rooms', {
+      const response = await fetch(`${API_BASE_URL}/rooms`, {
         method: 'POST',
       });
       if (!response.ok) throw new Error('API error');

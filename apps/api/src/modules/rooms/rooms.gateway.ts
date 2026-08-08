@@ -19,7 +19,15 @@ import {
   QueueRemovePayload,
 } from '@youtube-together/shared';
 
-@WebSocketGateway({ cors: { origin: '*' } })
+@WebSocketGateway({
+  cors: {
+    origin: [
+      'http://localhost:5173',
+      'https://snyx.netlify.app',
+    ],
+    credentials: true,
+  },
+})
 export class RoomsGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;

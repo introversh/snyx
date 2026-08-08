@@ -10,7 +10,10 @@ async function bootstrap() {
   
   // Enable CORS for frontend connection
   app.enableCors({
-    origin: '*', // We can restrict this in production
+    origin: [
+      'http://localhost:5173',
+      'https://snyx.netlify.app',
+    ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
