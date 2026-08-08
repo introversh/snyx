@@ -21,10 +21,20 @@ import {
 
 @WebSocketGateway({
   cors: {
-    origin: [
-      'http://localhost:5173',
-      'https://snyx.netlify.app',
-    ],
+    origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
+      if (
+        !origin ||
+        origin === 'https://snyx.netlify.app' ||
+        origin === 'http://localhost:5173' ||
+        origin.endsWith('.netlify.app') ||
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:')
+      ) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
   },
 })

@@ -10,10 +10,20 @@ async function bootstrap() {
   
   // Enable CORS for frontend connection
   app.enableCors({
-    origin: [
-      'http://localhost:5173',
-      'https://snyx.netlify.app',
-    ],
+    origin: (origin, callback) => {
+      if (
+        !origin ||
+        origin === 'https://snyx.netlify.app' ||
+        origin === 'http://localhost:5173' ||
+        origin.endsWith('.netlify.app') ||
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:')
+      ) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
