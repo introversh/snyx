@@ -29,7 +29,7 @@ export class RoomsController {
         isPlaying: room.isPlaying,
         position: room.position,
         playbackStartedAt: room.playbackStartedAt ? room.playbackStartedAt.getTime() : null,
-        queue: room.queue.map(item => ({
+        queue: room.queue.map((item: any) => ({
           id: item.id,
           videoId: item.videoId,
           title: item.title,

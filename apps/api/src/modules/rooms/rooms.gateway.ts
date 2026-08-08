@@ -63,7 +63,7 @@ export class RoomsGateway implements OnGatewayDisconnect {
         isPlaying: dbRoom.isPlaying,
         position: dbRoom.position,
         playbackStartedAt: dbRoom.playbackStartedAt ? dbRoom.playbackStartedAt.getTime() : null,
-        queue: dbRoom.queue.map((item) => ({
+        queue: dbRoom.queue.map((item: any) => ({
           id: item.id,
           videoId: item.videoId,
           title: item.title,
@@ -350,7 +350,7 @@ export class RoomsGateway implements OnGatewayDisconnect {
 
     try {
       const room = await this.roomsService.getRoom(cleanRoomId);
-      const targetItem = room.queue.find((item) => item.id === itemId);
+      const targetItem = room.queue.find((item: any) => item.id === itemId);
       if (targetItem) {
         await this.roomsService.updatePlaybackState(
           cleanRoomId,
