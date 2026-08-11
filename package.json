@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=@youtube-together/api\" \"npm run dev --workspace=@youtube-together/web\"",
+    "start": "concurrently \"npm run start --workspace=@youtube-together/api\" \"npm run start --workspace=@youtube-together/web\"",
     "build:shared": "npm run build --workspace=@youtube-together/shared",
     "build:api": "npm run build --workspace=@youtube-together/api",
     "build:web": "npm run build --workspace=@youtube-together/web",

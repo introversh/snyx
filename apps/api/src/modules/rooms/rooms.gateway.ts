@@ -92,11 +92,24 @@ export class RoomsGateway implements OnGatewayDisconnect {
           addedAt: item.addedAt.getTime(),
         })),
         users,
+        chatMessages: (dbRoom as any).chatMessages ? (dbRoom as any).chatMessages.map((msg: any) => ({
+          id: msg.id,
+          roomId: msg.roomId,
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          senderAvatar: msg.senderAvatar || undefined,
+          content: msg.content,
+          createdAt: msg.createdAt.getTime(),
+        })) : [],
       };
 
       this.server.to(roomId).emit(SocketEvents.ROOM_STATE, state);
-    } catch (error) {
-      console.error(`Failed to broadcast state for room ${roomId}:`, error);
+    } catch (error: any) {
+      if (error?.status === 404 || error?.name === 'NotFoundException') {
+        this.presence.delete(roomId);
+      } else {
+        console.error(`Failed to broadcast state for room ${roomId}:`, error);
+      }
     }
   }
 
@@ -412,6 +425,32 @@ export class RoomsGateway implements OnGatewayDisconnect {
       await this.broadcastRoomState(cleanRoomId);
     } catch (e) {
       console.error(`Error reordering queue for room ${roomId}:`, e);
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.CHAT_MESSAGE)
+  async handleChatMessage(
+    @MessageBody() payload: { roomId: string; senderId: string; senderName: string; senderAvatar?: string; content: string },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { roomId, senderId, senderName, senderAvatar, content } = payload;
+    const cleanRoomId = roomId.toUpperCase().trim();
+
+    try {
+      const msg = await this.roomsService.createChatMessage(cleanRoomId, senderId, senderName, content, senderAvatar);
+      
+      // Broadcast chat message instantly to all connected client sockets in the room
+      this.server.to(cleanRoomId).emit(SocketEvents.CHAT_MESSAGE, {
+        id: msg.id,
+        roomId: msg.roomId,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        senderAvatar: msg.senderAvatar || undefined,
+        content: msg.content,
+        createdAt: msg.createdAt.getTime(),
+      });
+    } catch (err) {
+      console.error(`Error creating/broadcasting chat message in room ${roomId}:`, err);
     }
   }
 }

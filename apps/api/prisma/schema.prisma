@@ -9,16 +9,17 @@ generator client {
 }
 
 model Room {
-  id                    String      @id
+  id                    String        @id
   currentVideoId        String?
   currentVideoTitle     String?
   currentVideoThumbnail String?
-  isPlaying             Boolean     @default(false)
-  position              Float       @default(0.0)
+  isPlaying             Boolean       @default(false)
+  position              Float         @default(0.0)
   playbackStartedAt     DateTime?
-  updatedAt             DateTime    @updatedAt
-  createdAt             DateTime    @default(now())
+  updatedAt             DateTime      @updatedAt
+  createdAt             DateTime      @default(now())
   queue                 QueueItem[]
+  chatMessages          ChatMessage[]
 }
 
 model QueueItem {
@@ -33,4 +34,83 @@ model QueueItem {
   addedBy      String
   addedAt      DateTime @default(now())
   order        Int      @default(0)
+}
+
+model User {
+  id              String   @id @default(uuid())
+  username        String   @unique
+  password        String
+  displayName     String?
+  profilePicture  String?
+  bio             String?  @default("")
+  profileBanner   String?  @default("")
+  gender          String   @default("male")
+  isPrivate       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  sentFriendRequests     FriendRequest[] @relation("FriendRequestsSent")
+  receivedFriendRequests FriendRequest[] @relation("FriendRequestsReceived")
+
+  friendships1 Friendship[] @relation("Friendships1")
+  friendships2 Friendship[] @relation("Friendships2")
+
+  sentDMs         DirectMessage[] @relation("DMSent")
+  receivedDMs     DirectMessage[] @relation("DMReceived")
+
+  sentInvites     RoomInvite[] @relation("InvitesSent")
+  receivedInvites RoomInvite[] @relation("InvitesReceived")
+}
+
+model FriendRequest {
+  id         String   @id @default(uuid())
+  senderId   String
+  sender     User     @relation("FriendRequestsSent", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User     @relation("FriendRequestsReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+  status     String   @default("PENDING") // PENDING, ACCEPTED, DECLINED
+  createdAt  DateTime @default(now())
+
+  @@unique([senderId, receiverId])
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  user1Id   String
+  user1     User     @relation("Friendships1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2Id   String
+  user2     User     @relation("Friendships2", fields: [user2Id], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([user1Id, user2Id])
+}
+
+model DirectMessage {
+  id         String   @id @default(uuid())
+  senderId   String
+  sender     User     @relation("DMSent", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User     @relation("DMReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+  content    String
+  createdAt  DateTime @default(now())
+}
+
+model RoomInvite {
+  id          String   @id @default(uuid())
+  roomId      String
+  senderId    String
+  sender      User     @relation("InvitesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId  String
+  receiver    User     @relation("InvitesReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+}
+
+model ChatMessage {
+  id           String   @id @default(uuid())
+  roomId       String
+  room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId     String
+  senderName   String
+  senderAvatar String?
+  content      String
+  createdAt    DateTime @default(now())
 }

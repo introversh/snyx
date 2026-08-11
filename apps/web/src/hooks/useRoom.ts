@@ -1,10 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { SocketEvents, RoomState, JoinRoomPayload } from '@youtube-together/shared';
+import { getAvatarUrl } from '../pages/LandingPage';
 
 const SOCKET_URL = (import.meta as any).env?.VITE_SOCKET_URL || 'http://localhost:3000';
 
 export function getOrCreateParticipant() {
+  const loggedInUserStr = localStorage.getItem('snyx_user');
+  if (loggedInUserStr) {
+    try {
+      const user = JSON.parse(loggedInUserStr);
+      if (user && user.userId && user.username) {
+        return {
+          participantId: user.userId,
+          displayName: user.displayName || user.username,
+          profilePicture: getAvatarUrl(user.profilePicture, user.gender),
+          token: user.token
+        };
+      }
+    } catch (e) {}
+  }
+
   let participantId = localStorage.getItem('together_participant_id');
   if (!participantId) {
     participantId = 'usr_' + Math.random().toString(36).substring(2, 15);
@@ -16,7 +32,7 @@ export function getOrCreateParticipant() {
     displayName = defaultNames[Math.floor(Math.random() * defaultNames.length)];
     localStorage.setItem('together_display_name', displayName);
   }
-  return { participantId, displayName };
+  return { participantId, displayName, profilePicture: '' };
 }
 
 export function useRoom(roomId: string | null) {
@@ -79,6 +95,18 @@ export function useRoom(roomId: string | null) {
       setRoomState(state);
     });
 
+    socket.on(SocketEvents.CHAT_MESSAGE, (msg: any) => {
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        const exists = prevState.chatMessages.some((m) => m.id === msg.id);
+        if (exists) return prevState;
+        return {
+          ...prevState,
+          chatMessages: [...prevState.chatMessages, msg],
+        };
+      });
+    });
+
     socket.on(SocketEvents.ERROR, (err: { message: string }) => {
       setError(err.message);
     });
@@ -95,18 +123,21 @@ export function useRoom(roomId: string | null) {
 
   // Synchronized Playback Actions
   const play = (position: number) => {
+    setRoomState((prev) => (prev ? { ...prev, isPlaying: true, position, playbackStartedAt: Date.now() } : null));
     if (socketRef.current && roomId) {
       socketRef.current.emit(SocketEvents.PLAYBACK_PLAY, { roomId, position });
     }
   };
 
   const pause = (position: number) => {
+    setRoomState((prev) => (prev ? { ...prev, isPlaying: false, position, playbackStartedAt: null } : null));
     if (socketRef.current && roomId) {
       socketRef.current.emit(SocketEvents.PLAYBACK_PAUSE, { roomId, position });
     }
   };
 
   const seek = (position: number) => {
+    setRoomState((prev) => (prev ? { ...prev, position, playbackStartedAt: prev.isPlaying ? Date.now() : null } : null));
     if (socketRef.current && roomId) {
       socketRef.current.emit(SocketEvents.PLAYBACK_SEEK, { roomId, position });
     }
@@ -170,6 +201,19 @@ export function useRoom(roomId: string | null) {
     }
   };
 
+  const sendChatMessage = (content: string) => {
+    if (socketRef.current && roomId && content.trim()) {
+      const { displayName: latestName, profilePicture: latestAvatar } = getOrCreateParticipant();
+      socketRef.current.emit(SocketEvents.CHAT_MESSAGE, {
+        roomId,
+        senderId: participantId,
+        senderName: latestName,
+        senderAvatar: latestAvatar || undefined,
+        content: content.trim(),
+      });
+    }
+  };
+
   return {
     roomState,
     socketConnected,
@@ -187,5 +231,6 @@ export function useRoom(roomId: string | null) {
     removeFromQueue,
     playQueueItem,
     reorderQueue,
+    sendChatMessage,
   };
 }

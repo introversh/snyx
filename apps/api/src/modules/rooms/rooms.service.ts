@@ -54,6 +54,12 @@ export class RoomsService {
             order: 'asc',
           },
         },
+        chatMessages: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          take: 50,
+        },
       },
     });
 
@@ -144,5 +150,17 @@ export class RoomsService {
         })
       )
     );
+  }
+
+  async createChatMessage(roomId: string, senderId: string, senderName: string, content: string, senderAvatar?: string | null) {
+    return this.prisma.chatMessage.create({
+      data: {
+        roomId,
+        senderId,
+        senderName,
+        senderAvatar: senderAvatar || null,
+        content,
+      },
+    });
   }
 }

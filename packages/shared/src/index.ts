@@ -15,6 +15,28 @@ export interface QueueItem {
   addedAt: number;
 }
 
+export interface ChatMessage {
+  id: string;
+  roomId: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  content: string;
+  createdAt: number;
+}
+
+export interface UserProfile {
+  userId: string;
+  username: string;
+  displayName?: string;
+  profilePicture?: string;
+  bio?: string;
+  profileBanner?: string;
+  gender?: string;
+  isPrivate?: boolean;
+  token?: string;
+}
+
 export interface RoomState {
   roomId: string;
   currentVideoId: string | null;
@@ -25,6 +47,7 @@ export interface RoomState {
   playbackStartedAt: number | null; // Server timestamp in ms
   queue: QueueItem[];
   users: RoomUser[];
+  chatMessages: ChatMessage[];
 }
 
 export const SocketEvents = {
@@ -44,6 +67,7 @@ export const SocketEvents = {
   ROOM_STATE: 'room:state',
   ROOM_USER_JOINED: 'room:user-joined',
   ROOM_USER_LEFT: 'room:user-left',
+  CHAT_MESSAGE: 'room:chat-message',
   ERROR: 'room:error'
 } as const;
 

@@ -39,6 +39,15 @@ export class RoomsController {
           addedBy: item.addedBy,
           addedAt: item.addedAt.getTime(),
         })),
+        chatMessages: (room as any).chatMessages?.map((msg: any) => ({
+          id: msg.id,
+          roomId: msg.roomId,
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          senderAvatar: msg.senderAvatar || undefined,
+          content: msg.content,
+          createdAt: msg.createdAt.getTime(),
+        })) || [],
       };
     } catch (error) {
       throw new NotFoundException(`Room ${cleanId} not found.`);
