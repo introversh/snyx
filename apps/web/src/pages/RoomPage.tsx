@@ -18,6 +18,7 @@ import {
   Camera,
   X,
   Reply,
+  Pencil,
 } from 'lucide-react';
 import { useRoom } from '../hooks/useRoom';
 import YouTubePlayer, { YouTubePlayerRef } from '../components/YouTubePlayer';
@@ -68,6 +69,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     toggleReaction,
     fetchOlderMessages,
     deleteChatMessage,
+    editChatMessage,
   } = useRoom(roomId);
 
   const playerRef = useRef<YouTubePlayerRef | null>(null);
@@ -99,8 +101,9 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   const prevMessagesCountRef = useRef(0);
   const lastMsgRef = useRef<number>(0);
 
-  // Chat Reply, Emoji Reactions, Swipe Gesture & Infinite Scroll States
+  // Chat Reply, Edit Message, Emoji Reactions, Swipe Gesture & Infinite Scroll States
   const [replyTarget, setReplyTarget] = useState<{ id: string; senderName: string; content: string } | null>(null);
+  const [editingTarget, setEditingTarget] = useState<{ id: string; content: string } | null>(null);
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
@@ -526,13 +529,27 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     setSwipeOffsetX(0);
   };
 
-  // Send Chat Message
+  // Helper to check 2-minute edit eligibility
+  const isEligibleForEdit = (msg: any) => {
+    if (!msg || msg.senderId !== participantId) return false;
+    const createdAtMs = typeof msg.createdAt === 'number' ? msg.createdAt : new Date(msg.createdAt).getTime();
+    const elapsedMs = Date.now() - createdAtMs;
+    return elapsedMs <= 2 * 60 * 1000;
+  };
+
+  // Send or Edit Chat Message
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    sendChatMessage(chatInput, replyTarget || undefined);
+
+    if (editingTarget) {
+      editChatMessage(editingTarget.id, chatInput.trim());
+      setEditingTarget(null);
+    } else {
+      sendChatMessage(chatInput.trim(), replyTarget || undefined);
+      setReplyTarget(null);
+    }
     setChatInput('');
-    setReplyTarget(null);
   };
 
   // Handle local file uploads inside room settings (Base64 encoding)
@@ -1006,6 +1023,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                                 isOwn ? 'text-indigo-200' : 'text-neutral-550'
                               }`}>
                                 {formatMsgTime(msg.createdAt)}
+                                {msg.isEdited && <span className="ml-1 italic font-sans text-neutral-300 opacity-80 font-normal">(edited)</span>}
                               </span>
 
                               {/* WhatsApp / Instagram Floating Reaction Badge Pinned to Bubble Corner */}
@@ -1124,6 +1142,23 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                           <span>Reply to Message</span>
                         </button>
 
+                        {/* WhatsApp-style Edit Message option (within 2-minute window) */}
+                        {isEligibleForEdit(longPressMenuMsg) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingTarget({ id: longPressMenuMsg.id, content: longPressMenuMsg.content });
+                              setChatInput(longPressMenuMsg.content);
+                              setReplyTarget(null);
+                              setLongPressMenuMsg(null);
+                            }}
+                            className="w-full flex items-center justify-center gap-2 py-3 bg-violet-600/10 hover:bg-violet-600/20 text-violet-300 rounded-2xl text-xs font-bold transition border border-violet-500/20"
+                          >
+                            <Pencil className="w-4 h-4 text-violet-400" />
+                            <span>Edit Message</span>
+                          </button>
+                        )}
+
                         {longPressMenuMsg.senderId === participantId && (
                           <button
                             type="button"
@@ -1147,6 +1182,28 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                         </button>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* Editing Banner */}
+                {editingTarget && (
+                  <div className="flex items-center justify-between bg-violet-600/20 border-l-4 border-violet-400 px-3 py-2 rounded-t-xl mb-1 text-xs shrink-0 animate-fadeIn">
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <span className="text-[10px] font-bold text-violet-300 uppercase tracking-wider flex items-center gap-1">
+                        <Pencil className="w-3 h-3" /> Editing message
+                      </span>
+                      <span className="text-neutral-300 text-[11px] truncate">{editingTarget.content}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingTarget(null);
+                        setChatInput('');
+                      }}
+                      className="text-neutral-400 hover:text-white p-1 rounded-full hover:bg-white/10 shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 )}
 

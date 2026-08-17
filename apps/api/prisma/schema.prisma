@@ -115,6 +115,7 @@ model ChatMessage {
   replyToId         String?
   replyToSenderName String?
   replyToContent    String?
+  isEdited          Boolean               @default(false)
   createdAt         DateTime              @default(now())
   reactions         ChatMessageReaction[]
 }

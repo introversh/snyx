@@ -268,8 +268,41 @@ export class RoomsService {
       return null;
     }
 
-    return this.prisma.chatMessage.delete({
+    await this.prisma.chatMessage.delete({
       where: { id: messageId },
     });
+
+    return { messageId };
+  }
+
+  async editChatMessage(
+    roomId: string,
+    messageId: string,
+    participantId: string,
+    newContent: string
+  ) {
+    const msg = await this.prisma.chatMessage.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!msg || msg.roomId !== roomId || msg.senderId !== participantId) {
+      throw new Error('Message not found or unauthorized');
+    }
+
+    const elapsedMs = Date.now() - new Date(msg.createdAt).getTime();
+    const TWO_MINUTES_MS = 2 * 60 * 1000;
+    if (elapsedMs > TWO_MINUTES_MS) {
+      throw new Error('Message can only be edited within 2 minutes of sending.');
+    }
+
+    const updated = await this.prisma.chatMessage.update({
+      where: { id: messageId },
+      data: {
+        content: newContent,
+        isEdited: true,
+      },
+    });
+
+    return updated;
   }
 }

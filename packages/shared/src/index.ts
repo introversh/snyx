@@ -34,6 +34,7 @@ export interface ChatMessage {
   replyToId?: string;
   replyToSenderName?: string;
   replyToContent?: string;
+  isEdited?: boolean;
   createdAt: number;
   reactions?: ChatMessageReaction[];
 }
@@ -83,6 +84,7 @@ export const SocketEvents = {
   CHAT_MESSAGE: 'room:chat-message',
   CHAT_REACTION: 'room:chat-reaction',
   CHAT_DELETE: 'room:chat-delete',
+  CHAT_EDIT: 'room:chat-edit',
   ERROR: 'room:error'
 } as const;
 

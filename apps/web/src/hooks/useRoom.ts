@@ -141,6 +141,18 @@ export function useRoom(roomId: string | null) {
       });
     });
 
+    socket.on(SocketEvents.CHAT_EDIT, (data: { messageId: string; content: string; isEdited: boolean }) => {
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        return {
+          ...prevState,
+          chatMessages: prevState.chatMessages.map((m) =>
+            m.id === data.messageId ? { ...m, content: data.content, isEdited: data.isEdited } : m
+          ),
+        };
+      });
+    });
+
     socket.on(SocketEvents.ERROR, (err: { message: string }) => {
       setError(err.message);
     });
@@ -305,6 +317,17 @@ export function useRoom(roomId: string | null) {
     }
   };
 
+  const editChatMessage = (messageId: string, newContent: string) => {
+    if (socketRef.current && roomId) {
+      socketRef.current.emit(SocketEvents.CHAT_EDIT, {
+        roomId,
+        messageId,
+        participantId,
+        newContent,
+      });
+    }
+  };
+
   return {
     roomState,
     socketConnected,
@@ -326,5 +349,6 @@ export function useRoom(roomId: string | null) {
     toggleReaction,
     fetchOlderMessages,
     deleteChatMessage,
+    editChatMessage,
   };
 }

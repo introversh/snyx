@@ -550,4 +550,27 @@ export class RoomsGateway implements OnGatewayDisconnect {
       console.error(`Error un-sending chat message in room ${roomId}:`, err);
     }
   }
+
+  @SubscribeMessage(SocketEvents.CHAT_EDIT)
+  async handleChatEdit(
+    @MessageBody() payload: { roomId: string; messageId: string; participantId: string; newContent: string },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { roomId, messageId, participantId, newContent } = payload;
+    const cleanRoomId = roomId.toUpperCase().trim();
+
+    try {
+      const updated = await this.roomsService.editChatMessage(cleanRoomId, messageId, participantId, newContent);
+      if (updated) {
+        this.server.to(cleanRoomId).emit(SocketEvents.CHAT_EDIT, {
+          messageId: updated.id,
+          content: updated.content,
+          isEdited: updated.isEdited,
+        });
+      }
+    } catch (err: any) {
+      console.error(`Error editing chat message in room ${roomId}:`, err);
+      client.emit(SocketEvents.ERROR, { message: err?.message || 'Failed to edit message' });
+    }
+  }
 }
