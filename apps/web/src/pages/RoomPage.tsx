@@ -16,7 +16,8 @@ import {
   Send,
   LogOut,
   Camera,
-  X
+  X,
+  Reply,
 } from 'lucide-react';
 import { useRoom } from '../hooks/useRoom';
 import YouTubePlayer, { YouTubePlayerRef } from '../components/YouTubePlayer';
@@ -64,6 +65,9 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     playQueueItem,
     reorderQueue,
     sendChatMessage,
+    toggleReaction,
+    fetchOlderMessages,
+    deleteChatMessage,
   } = useRoom(roomId);
 
   const playerRef = useRef<YouTubePlayerRef | null>(null);
@@ -94,6 +98,18 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const prevMessagesCountRef = useRef(0);
   const lastMsgRef = useRef<number>(0);
+
+  // Chat Reply, Emoji Reactions, Swipe Gesture & Infinite Scroll States
+  const [replyTarget, setReplyTarget] = useState<{ id: string; senderName: string; content: string } | null>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const [swipingMsgId, setSwipingMsgId] = useState<string | null>(null);
+  const [swipeOffsetX, setSwipeOffsetX] = useState(0);
+  const touchStartXRef = useRef<number | null>(null);
+  const [longPressMenuMsg, setLongPressMenuMsg] = useState<any | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '🔥'];
 
   // Chat Floating Notification Toast state
   const [chatToast, setChatToast] = useState<{ senderName: string; content: string } | null>(null);
@@ -432,12 +448,91 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     setSearchQuery('');
   };
 
+  const handleChatScroll = async (e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    if (container.scrollTop < 40 && !isLoadingOlder && hasMoreOlder && roomState?.chatMessages?.length) {
+      const oldestMsg = roomState.chatMessages[0];
+      if (!oldestMsg) return;
+      setIsLoadingOlder(true);
+      const prevScrollHeight = container.scrollHeight;
+      const fetched = await fetchOlderMessages(oldestMsg.id);
+      if (!fetched) {
+        setHasMoreOlder(false);
+      } else {
+        requestAnimationFrame(() => {
+          if (chatLogRef.current) {
+            chatLogRef.current.scrollTop = chatLogRef.current.scrollHeight - prevScrollHeight;
+          }
+        });
+      }
+      setIsLoadingOlder(false);
+    }
+  };
+
+  const scrollToMessage = (msgId: string) => {
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 2000);
+    }
+  };
+
+  // Right Swipe-to-Reply & Long-Press Gesture Handlers
+  const handleSwipeStart = (e: React.TouchEvent | React.MouseEvent, msg: any) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    touchStartXRef.current = clientX;
+    setSwipingMsgId(msg.id);
+    setSwipeOffsetX(0);
+
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = window.setTimeout(() => {
+      if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+        try { navigator.vibrate(40); } catch (err) {}
+      }
+      setLongPressMenuMsg(msg);
+    }, 450);
+  };
+
+  const handleSwipeMove = (e: React.TouchEvent | React.MouseEvent) => {
+    if (touchStartXRef.current === null || !swipingMsgId) return;
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const deltaX = clientX - touchStartXRef.current;
+
+    if (Math.abs(deltaX) > 10) {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    }
+
+    if (deltaX > 0) {
+      setSwipeOffsetX(Math.min(deltaX, 70));
+    } else {
+      setSwipeOffsetX(0);
+    }
+  };
+
+  const handleSwipeEnd = (msg: any) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (swipeOffsetX > 40 && swipingMsgId === msg.id) {
+      setReplyTarget({ id: msg.id, senderName: msg.senderName, content: msg.content });
+    }
+    touchStartXRef.current = null;
+    setSwipingMsgId(null);
+    setSwipeOffsetX(0);
+  };
+
   // Send Chat Message
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    sendChatMessage(chatInput);
+    sendChatMessage(chatInput, replyTarget || undefined);
     setChatInput('');
+    setReplyTarget(null);
   };
 
   // Handle local file uploads inside room settings (Base64 encoding)
@@ -822,18 +917,46 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div
                   ref={chatLogRef}
+                  onScroll={handleChatScroll}
                   className="flex-1 overflow-y-auto space-y-4 mb-4 pr-1 scrollbar-thin scroll-smooth"
                 >
+                  {isLoadingOlder && (
+                    <div className="flex justify-center py-2 text-[10px] text-neutral-400 font-medium animate-pulse">
+                      Loading older messages...
+                    </div>
+                  )}
+
                   {roomState?.chatMessages && roomState.chatMessages.length > 0 ? (
                     roomState.chatMessages.map((msg) => {
                       const isOwn = msg.senderId === participantId;
                       const avatar = msg.senderAvatar || defaultAvatar;
+                      const isHighlighted = msg.id === highlightedMsgId;
                       
                       return (
                         <div
                           key={msg.id}
-                          className={`flex items-start gap-2.5 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                          id={`msg-${msg.id}`}
+                          onTouchStart={(e) => handleSwipeStart(e, msg)}
+                          onTouchMove={handleSwipeMove}
+                          onTouchEnd={() => handleSwipeEnd(msg)}
+                          onMouseDown={(e) => handleSwipeStart(e, msg)}
+                          onMouseMove={handleSwipeMove}
+                          onMouseUp={() => handleSwipeEnd(msg)}
+                          style={{
+                            transform: `translateX(${swipingMsgId === msg.id ? swipeOffsetX : 0}px)`,
+                            transition: swipingMsgId === msg.id ? 'none' : 'transform 0.2s ease-out',
+                          }}
+                          className={`flex items-start gap-2.5 group/msg relative transition-all duration-300 select-none cursor-pointer ${
+                            isOwn ? 'justify-end' : 'justify-start'
+                          } ${isHighlighted ? 'ring-2 ring-violet-500 ring-offset-2 ring-offset-neutral-900 rounded-2xl p-1 bg-violet-500/10' : ''}`}
                         >
+                          {/* Swipe-to-reply indicator icon */}
+                          {swipingMsgId === msg.id && swipeOffsetX > 10 && (
+                            <div className="absolute left-[-28px] top-1/2 -translate-y-1/2 text-violet-400 animate-pulse flex items-center">
+                              <Reply className="w-4 h-4" />
+                            </div>
+                          )}
+
                           {!isOwn && (
                             <img
                               src={avatar}
@@ -843,30 +966,101 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                               title="View Profile Page"
                             />
                           )}
-                          <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} max-w-[75%]`}>
+                          
+                          <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} max-w-[80%] sm:max-w-[75%] relative group/msg mb-2`}>
+                            {/* Message Header - Clean Sender Name */}
                             {!isOwn && (
                               <span
                                 onClick={() => navigateToProfile(msg.senderId)}
-                                className="text-[9px] text-neutral-500 font-bold uppercase tracking-wider mb-0.5 ml-1 cursor-pointer hover:text-white transition"
+                                className="text-[9px] text-neutral-400 font-bold uppercase tracking-wider mb-1 ml-1 cursor-pointer hover:text-white transition"
                               >
                                 {msg.senderName}
                               </span>
                             )}
+
+                            {/* Message Bubble Container with Pinned Reaction Badge */}
                             <div
-                              className={`px-3.5 py-2.5 text-xs leading-relaxed rounded-2xl shadow-sm border ${
+                              className={`relative px-3.5 py-2.5 text-xs leading-relaxed shadow-sm border transition-all duration-200 ${
                                 isOwn
-                                  ? 'bg-gradient-to-tr from-violet-600 to-indigo-600 border-none text-white rounded-tr-none'
-                                  : 'bg-white/5 border border-white/10 text-white rounded-tl-none'
+                                  ? 'bg-gradient-to-tr from-violet-600 to-indigo-600 border-violet-500/30 text-white rounded-2xl rounded-tr-xs'
+                                  : 'bg-white/5 border border-white/10 text-white rounded-2xl rounded-tl-xs'
                               }`}
                             >
-                              <p className="break-words font-medium">{msg.content}</p>
+                              {/* Quoted Message Preview if replying */}
+                              {msg.replyToContent && (
+                                <div
+                                  onClick={() => scrollToMessage(msg.replyToId!)}
+                                  className="mb-2 p-2 bg-black/40 border-l-4 border-violet-400 rounded-lg text-left cursor-pointer hover:bg-black/60 transition"
+                                >
+                                  <span className="block text-[9px] font-bold text-violet-300">
+                                    {msg.replyToSenderName || 'User'}
+                                  </span>
+                                  <p className="line-clamp-2 text-neutral-300 text-[10px] break-words">
+                                    {msg.replyToContent}
+                                  </p>
+                                </div>
+                              )}
+
+                              <p className="break-words font-medium pr-4">{msg.content}</p>
                               <span className={`block text-[8px] text-right mt-1 font-mono leading-none ${
                                 isOwn ? 'text-indigo-200' : 'text-neutral-550'
                               }`}>
                                 {formatMsgTime(msg.createdAt)}
                               </span>
+
+                              {/* WhatsApp / Instagram Floating Reaction Badge Pinned to Bubble Corner */}
+                              {msg.reactions && msg.reactions.length > 0 && (() => {
+                                const counts = new Map<string, { count: number; isReacted: boolean }>();
+                                for (const r of msg.reactions) {
+                                  const current = counts.get(r.emoji) || { count: 0, isReacted: false };
+                                  counts.set(r.emoji, {
+                                    count: current.count + 1,
+                                    isReacted: current.isReacted || r.participantId === participantId,
+                                  });
+                                }
+                                const totalCount = msg.reactions.length;
+                                const topEmojis = Array.from(counts.keys()).slice(0, 3);
+                                const isUserReacted = msg.reactions.some(r => r.participantId === participantId);
+
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setLongPressMenuMsg(msg);
+                                    }}
+                                    className={`absolute -bottom-3 ${isOwn ? 'right-2' : 'left-2'} z-20 flex items-center gap-1 bg-neutral-900 border px-2 py-0.5 rounded-full shadow-lg backdrop-blur-md cursor-pointer hover:scale-110 active:scale-95 transition-all text-[11px] ${
+                                      isUserReacted ? 'border-violet-500 text-violet-300 shadow-violet-500/30' : 'border-white/20 text-neutral-300'
+                                    }`}
+                                    title="View or change reaction"
+                                  >
+                                    <span className="flex items-center tracking-tighter">
+                                      {topEmojis.join('')}
+                                    </span>
+                                    {totalCount > 1 && (
+                                      <span className="text-[10px] font-bold text-neutral-200 ml-0.5">{totalCount}</span>
+                                    )}
+                                  </button>
+                                );
+                              })()}
+                            </div>
+
+                            {/* Quick Reaction Emojis Row - Desktop Hover Only */}
+                            <div className={`hidden md:flex items-center gap-0.5 bg-black/80 border border-white/10 px-1.5 py-0.5 rounded-full backdrop-blur-md opacity-0 group-hover/msg:opacity-100 transition-opacity duration-200 shadow-md mt-1 ${isOwn ? 'self-end' : 'self-start'}`}>
+                              {QUICK_EMOJIS.map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => toggleReaction(msg.id, emoji)}
+                                  className="hover:scale-125 transition text-xs p-0.5 cursor-pointer opacity-80 hover:opacity-100"
+                                  title={`React with ${emoji}`}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
                             </div>
                           </div>
+
                           {isOwn && (
                             <img
                               src={avatar}
@@ -887,6 +1081,93 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                     </div>
                   )}
                 </div>
+
+                {/* Long-Press Mobile Context Menu Modal */}
+                {longPressMenuMsg && (
+                  <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn" onClick={() => setLongPressMenuMsg(null)}>
+                    <div className="bg-neutral-900 border border-white/10 rounded-3xl p-5 w-full max-w-xs shadow-2xl flex flex-col gap-4 animate-scaleUp" onClick={(e) => e.stopPropagation()}>
+                      <div className="text-center pb-2 border-b border-white/5">
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-neutral-400 block">
+                          Message from {longPressMenuMsg.senderName}
+                        </span>
+                        <p className="text-xs text-white font-medium truncate mt-1">"{longPressMenuMsg.content}"</p>
+                      </div>
+
+                      {/* Quick Emoji Reactions */}
+                      <div className="flex justify-around bg-white/5 p-3 rounded-2xl border border-white/5">
+                        {QUICK_EMOJIS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => {
+                              toggleReaction(longPressMenuMsg.id, emoji);
+                              setLongPressMenuMsg(null);
+                            }}
+                            className="text-xl hover:scale-125 transition active:scale-95"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Menu Actions */}
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReplyTarget({ id: longPressMenuMsg.id, senderName: longPressMenuMsg.senderName, content: longPressMenuMsg.content });
+                            setLongPressMenuMsg(null);
+                          }}
+                          className="w-full flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl text-xs font-bold transition"
+                        >
+                          <Reply className="w-4 h-4 text-violet-400" />
+                          <span>Reply to Message</span>
+                        </button>
+
+                        {longPressMenuMsg.senderId === participantId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              deleteChatMessage(longPressMenuMsg.id);
+                              setLongPressMenuMsg(null);
+                            }}
+                            className="w-full flex items-center justify-center gap-2 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-2xl text-xs font-bold transition border border-red-500/20"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-400" />
+                            <span>Unsend Message</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => setLongPressMenuMsg(null)}
+                          className="w-full py-2.5 text-neutral-400 hover:text-white text-xs font-semibold transition mt-1"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reply Banner */}
+                {replyTarget && (
+                  <div className="flex items-center justify-between bg-white/10 border-l-4 border-violet-500 px-3 py-2 rounded-t-xl mb-1 text-xs shrink-0 animate-fadeIn">
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <span className="text-[10px] font-bold text-violet-400 uppercase tracking-wider">
+                        Replying to {replyTarget.senderName}
+                      </span>
+                      <span className="text-neutral-300 text-[11px] truncate">{replyTarget.content}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyTarget(null)}
+                      className="text-neutral-400 hover:text-white p-1 rounded-full hover:bg-white/10 shrink-0"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 <form onSubmit={handleSendChat} className="flex gap-2 border-t border-white/5 pt-3.5 shrink-0">
                   <input

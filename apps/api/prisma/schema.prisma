@@ -105,12 +105,28 @@ model RoomInvite {
 }
 
 model ChatMessage {
-  id           String   @id @default(uuid())
-  roomId       String
-  room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  senderId     String
-  senderName   String
-  senderAvatar String?
-  content      String
-  createdAt    DateTime @default(now())
+  id                String                @id @default(uuid())
+  roomId            String
+  room              Room                  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId          String
+  senderName        String
+  senderAvatar      String?
+  content           String
+  replyToId         String?
+  replyToSenderName String?
+  replyToContent    String?
+  createdAt         DateTime              @default(now())
+  reactions         ChatMessageReaction[]
+}
+
+model ChatMessageReaction {
+  id            String      @id @default(uuid())
+  messageId     String
+  message       ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  participantId String
+  displayName   String
+  emoji         String
+  createdAt     DateTime    @default(now())
+
+  @@unique([messageId, participantId])
 }

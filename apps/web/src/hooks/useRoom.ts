@@ -92,7 +92,19 @@ export function useRoom(roomId: string | null) {
     });
 
     socket.on(SocketEvents.ROOM_STATE, (state: RoomState) => {
-      setRoomState(state);
+      setRoomState((prevState) => {
+        if (!prevState) return state;
+        // Merge chat messages so any older messages loaded via pagination are preserved
+        const existingMap = new Map(prevState.chatMessages.map((m) => [m.id, m]));
+        for (const msg of state.chatMessages) {
+          existingMap.set(msg.id, msg);
+        }
+        const mergedMessages = Array.from(existingMap.values()).sort((a, b) => a.createdAt - b.createdAt);
+        return {
+          ...state,
+          chatMessages: mergedMessages,
+        };
+      });
     });
 
     socket.on(SocketEvents.CHAT_MESSAGE, (msg: any) => {
@@ -103,6 +115,28 @@ export function useRoom(roomId: string | null) {
         return {
           ...prevState,
           chatMessages: [...prevState.chatMessages, msg],
+        };
+      });
+    });
+
+    socket.on(SocketEvents.CHAT_REACTION, (data: { messageId: string; reactions: any[] }) => {
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        return {
+          ...prevState,
+          chatMessages: prevState.chatMessages.map((m) =>
+            m.id === data.messageId ? { ...m, reactions: data.reactions } : m
+          ),
+        };
+      });
+    });
+
+    socket.on(SocketEvents.CHAT_DELETE, (data: { messageId: string }) => {
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        return {
+          ...prevState,
+          chatMessages: prevState.chatMessages.filter((m) => m.id !== data.messageId),
         };
       });
     });
@@ -201,7 +235,10 @@ export function useRoom(roomId: string | null) {
     }
   };
 
-  const sendChatMessage = (content: string) => {
+  const sendChatMessage = (
+    content: string,
+    replyTo?: { id: string; senderName: string; content: string }
+  ) => {
     if (socketRef.current && roomId && content.trim()) {
       const { displayName: latestName, profilePicture: latestAvatar } = getOrCreateParticipant();
       socketRef.current.emit(SocketEvents.CHAT_MESSAGE, {
@@ -210,6 +247,60 @@ export function useRoom(roomId: string | null) {
         senderName: latestName,
         senderAvatar: latestAvatar || undefined,
         content: content.trim(),
+        replyToId: replyTo?.id,
+        replyToSenderName: replyTo?.senderName,
+        replyToContent: replyTo?.content,
+      });
+    }
+  };
+
+  const toggleReaction = (messageId: string, emoji: string) => {
+    if (socketRef.current && roomId) {
+      const { displayName: latestName } = getOrCreateParticipant();
+      socketRef.current.emit(SocketEvents.CHAT_REACTION, {
+        roomId,
+        messageId,
+        participantId,
+        displayName: latestName,
+        emoji,
+      });
+    }
+  };
+
+  const fetchOlderMessages = async (beforeId: string): Promise<boolean> => {
+    if (!roomId) return false;
+    try {
+      const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
+      const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/messages?before=${beforeId}&limit=50`);
+      if (!res.ok) return false;
+      const olderMessages = await res.json();
+      if (!Array.isArray(olderMessages) || olderMessages.length === 0) return false;
+
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        const existingMap = new Map(prevState.chatMessages.map((m) => [m.id, m]));
+        for (const msg of olderMessages) {
+          existingMap.set(msg.id, msg);
+        }
+        const mergedMessages = Array.from(existingMap.values()).sort((a, b) => a.createdAt - b.createdAt);
+        return {
+          ...prevState,
+          chatMessages: mergedMessages,
+        };
+      });
+      return true;
+    } catch (e) {
+      console.error('Failed to fetch older messages:', e);
+      return false;
+    }
+  };
+
+  const deleteChatMessage = (messageId: string) => {
+    if (socketRef.current && roomId) {
+      socketRef.current.emit(SocketEvents.CHAT_DELETE, {
+        roomId,
+        messageId,
+        participantId,
       });
     }
   };
@@ -232,5 +323,8 @@ export function useRoom(roomId: string | null) {
     playQueueItem,
     reorderQueue,
     sendChatMessage,
+    toggleReaction,
+    fetchOlderMessages,
+    deleteChatMessage,
   };
 }

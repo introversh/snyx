@@ -56,9 +56,12 @@ export class RoomsService {
         },
         chatMessages: {
           orderBy: {
-            createdAt: 'asc',
+            createdAt: 'desc',
           },
           take: 50,
+          include: {
+            reactions: true,
+          },
         },
       },
     });
@@ -67,7 +70,36 @@ export class RoomsService {
       throw new NotFoundException(`Room with ID ${id} not found.`);
     }
 
+    // Reorder chat messages chronologically (oldest to newest)
+    room.chatMessages.reverse();
+
     return room;
+  }
+
+  async getPaginatedMessages(roomId: string, beforeId?: string, limit = 50) {
+    let whereClause: any = { roomId };
+
+    if (beforeId) {
+      const targetMsg = await this.prisma.chatMessage.findUnique({
+        where: { id: beforeId },
+      });
+      if (targetMsg) {
+        whereClause.createdAt = { lt: targetMsg.createdAt };
+      }
+    }
+
+    const messages = await this.prisma.chatMessage.findMany({
+      where: whereClause,
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: limit,
+      include: {
+        reactions: true,
+      },
+    });
+
+    return messages.reverse();
   }
 
   async updatePlaybackState(
@@ -152,7 +184,16 @@ export class RoomsService {
     );
   }
 
-  async createChatMessage(roomId: string, senderId: string, senderName: string, content: string, senderAvatar?: string | null) {
+  async createChatMessage(
+    roomId: string,
+    senderId: string,
+    senderName: string,
+    content: string,
+    senderAvatar?: string | null,
+    replyToId?: string | null,
+    replyToSenderName?: string | null,
+    replyToContent?: string | null
+  ) {
     return this.prisma.chatMessage.create({
       data: {
         roomId,
@@ -160,7 +201,75 @@ export class RoomsService {
         senderName,
         senderAvatar: senderAvatar || null,
         content,
+        replyToId: replyToId || null,
+        replyToSenderName: replyToSenderName || null,
+        replyToContent: replyToContent || null,
       },
+      include: {
+        reactions: true,
+      },
+    });
+  }
+
+  async toggleReaction(
+    roomId: string,
+    messageId: string,
+    participantId: string,
+    displayName: string,
+    emoji: string
+  ) {
+    const existing = await this.prisma.chatMessageReaction.findUnique({
+      where: {
+        messageId_participantId: {
+          messageId,
+          participantId,
+        },
+      },
+    });
+
+    if (existing) {
+      if (existing.emoji === emoji) {
+        await this.prisma.chatMessageReaction.delete({
+          where: { id: existing.id },
+        });
+      } else {
+        await this.prisma.chatMessageReaction.update({
+          where: { id: existing.id },
+          data: { emoji, displayName },
+        });
+      }
+    } else {
+      await this.prisma.chatMessageReaction.create({
+        data: {
+          messageId,
+          participantId,
+          displayName,
+          emoji,
+        },
+      });
+    }
+
+    const updatedReactions = await this.prisma.chatMessageReaction.findMany({
+      where: { messageId },
+    });
+
+    return {
+      messageId,
+      reactions: updatedReactions,
+    };
+  }
+
+  async deleteChatMessage(roomId: string, messageId: string, participantId: string) {
+    const msg = await this.prisma.chatMessage.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!msg || msg.roomId !== roomId || msg.senderId !== participantId) {
+      return null;
+    }
+
+    return this.prisma.chatMessage.delete({
+      where: { id: messageId },
     });
   }
 }

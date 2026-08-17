@@ -99,7 +99,18 @@ export class RoomsGateway implements OnGatewayDisconnect {
           senderName: msg.senderName,
           senderAvatar: msg.senderAvatar || undefined,
           content: msg.content,
+          replyToId: msg.replyToId || undefined,
+          replyToSenderName: msg.replyToSenderName || undefined,
+          replyToContent: msg.replyToContent || undefined,
           createdAt: msg.createdAt.getTime(),
+          reactions: msg.reactions ? msg.reactions.map((r: any) => ({
+            id: r.id,
+            messageId: r.messageId,
+            participantId: r.participantId,
+            displayName: r.displayName,
+            emoji: r.emoji,
+            createdAt: r.createdAt.getTime(),
+          })) : [],
         })) : [],
       };
 
@@ -430,15 +441,33 @@ export class RoomsGateway implements OnGatewayDisconnect {
 
   @SubscribeMessage(SocketEvents.CHAT_MESSAGE)
   async handleChatMessage(
-    @MessageBody() payload: { roomId: string; senderId: string; senderName: string; senderAvatar?: string; content: string },
+    @MessageBody() payload: {
+      roomId: string;
+      senderId: string;
+      senderName: string;
+      senderAvatar?: string;
+      content: string;
+      replyToId?: string;
+      replyToSenderName?: string;
+      replyToContent?: string;
+    },
     @ConnectedSocket() client: Socket
   ) {
-    const { roomId, senderId, senderName, senderAvatar, content } = payload;
+    const { roomId, senderId, senderName, senderAvatar, content, replyToId, replyToSenderName, replyToContent } = payload;
     const cleanRoomId = roomId.toUpperCase().trim();
 
     try {
-      const msg = await this.roomsService.createChatMessage(cleanRoomId, senderId, senderName, content, senderAvatar);
-      
+      const msg = await this.roomsService.createChatMessage(
+        cleanRoomId,
+        senderId,
+        senderName,
+        content,
+        senderAvatar,
+        replyToId,
+        replyToSenderName,
+        replyToContent
+      );
+
       // Broadcast chat message instantly to all connected client sockets in the room
       this.server.to(cleanRoomId).emit(SocketEvents.CHAT_MESSAGE, {
         id: msg.id,
@@ -447,10 +476,78 @@ export class RoomsGateway implements OnGatewayDisconnect {
         senderName: msg.senderName,
         senderAvatar: msg.senderAvatar || undefined,
         content: msg.content,
+        replyToId: msg.replyToId || undefined,
+        replyToSenderName: msg.replyToSenderName || undefined,
+        replyToContent: msg.replyToContent || undefined,
         createdAt: msg.createdAt.getTime(),
+        reactions: msg.reactions ? msg.reactions.map((r: any) => ({
+          id: r.id,
+          messageId: r.messageId,
+          participantId: r.participantId,
+          displayName: r.displayName,
+          emoji: r.emoji,
+          createdAt: r.createdAt.getTime(),
+        })) : [],
       });
     } catch (err) {
       console.error(`Error creating/broadcasting chat message in room ${roomId}:`, err);
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.CHAT_REACTION)
+  async handleChatReaction(
+    @MessageBody() payload: {
+      roomId: string;
+      messageId: string;
+      participantId: string;
+      displayName: string;
+      emoji: string;
+    },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { roomId, messageId, participantId, displayName, emoji } = payload;
+    const cleanRoomId = roomId.toUpperCase().trim();
+
+    try {
+      const result = await this.roomsService.toggleReaction(
+        cleanRoomId,
+        messageId,
+        participantId,
+        displayName,
+        emoji
+      );
+
+      this.server.to(cleanRoomId).emit(SocketEvents.CHAT_REACTION, {
+        messageId: result.messageId,
+        reactions: result.reactions.map((r: any) => ({
+          id: r.id,
+          messageId: r.messageId,
+          participantId: r.participantId,
+          displayName: r.displayName,
+          emoji: r.emoji,
+          createdAt: r.createdAt.getTime(),
+        })),
+      });
+    } catch (err) {
+      console.error(`Error toggling chat reaction in room ${roomId}:`, err);
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.CHAT_DELETE)
+  async handleChatDelete(
+    @MessageBody() payload: { roomId: string; messageId: string; participantId: string },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { roomId, messageId, participantId } = payload;
+    const cleanRoomId = roomId.toUpperCase().trim();
+
+    try {
+      const deleted = await this.roomsService.deleteChatMessage(cleanRoomId, messageId, participantId);
+      if (deleted) {
+        this.server.to(cleanRoomId).emit(SocketEvents.CHAT_DELETE, { messageId });
+      }
+    } catch (err) {
+      console.error(`Error un-sending chat message in room ${roomId}:`, err);
     }
   }
 }

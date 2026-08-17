@@ -15,6 +15,15 @@ export interface QueueItem {
   addedAt: number;
 }
 
+export interface ChatMessageReaction {
+  id: string;
+  messageId: string;
+  participantId: string;
+  displayName: string;
+  emoji: string;
+  createdAt: number;
+}
+
 export interface ChatMessage {
   id: string;
   roomId: string;
@@ -22,7 +31,11 @@ export interface ChatMessage {
   senderName: string;
   senderAvatar?: string;
   content: string;
+  replyToId?: string;
+  replyToSenderName?: string;
+  replyToContent?: string;
   createdAt: number;
+  reactions?: ChatMessageReaction[];
 }
 
 export interface UserProfile {
@@ -68,6 +81,8 @@ export const SocketEvents = {
   ROOM_USER_JOINED: 'room:user-joined',
   ROOM_USER_LEFT: 'room:user-left',
   CHAT_MESSAGE: 'room:chat-message',
+  CHAT_REACTION: 'room:chat-reaction',
+  CHAT_DELETE: 'room:chat-delete',
   ERROR: 'room:error'
 } as const;
 

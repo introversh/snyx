@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, NotFoundException } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, NotFoundException } from '@nestjs/common';
 import { RoomsService } from './rooms.service';
 
 @Controller('rooms')
@@ -46,11 +46,53 @@ export class RoomsController {
           senderName: msg.senderName,
           senderAvatar: msg.senderAvatar || undefined,
           content: msg.content,
+          replyToId: msg.replyToId || undefined,
+          replyToSenderName: msg.replyToSenderName || undefined,
+          replyToContent: msg.replyToContent || undefined,
           createdAt: msg.createdAt.getTime(),
+          reactions: msg.reactions ? msg.reactions.map((r: any) => ({
+            id: r.id,
+            messageId: r.messageId,
+            participantId: r.participantId,
+            displayName: r.displayName,
+            emoji: r.emoji,
+            createdAt: r.createdAt.getTime(),
+          })) : [],
         })) || [],
       };
     } catch (error) {
       throw new NotFoundException(`Room ${cleanId} not found.`);
     }
+  }
+
+  @Get(':id/messages')
+  async getMessages(
+    @Param('id') id: string,
+    @Query('before') before?: string,
+    @Query('limit') limit?: string
+  ) {
+    const cleanId = id.toUpperCase().trim();
+    const limitNum = limit ? parseInt(limit, 10) : 50;
+    const messages = await this.roomsService.getPaginatedMessages(cleanId, before, limitNum);
+    return messages.map((msg: any) => ({
+      id: msg.id,
+      roomId: msg.roomId,
+      senderId: msg.senderId,
+      senderName: msg.senderName,
+      senderAvatar: msg.senderAvatar || undefined,
+      content: msg.content,
+      replyToId: msg.replyToId || undefined,
+      replyToSenderName: msg.replyToSenderName || undefined,
+      replyToContent: msg.replyToContent || undefined,
+      createdAt: msg.createdAt.getTime(),
+      reactions: msg.reactions ? msg.reactions.map((r: any) => ({
+        id: r.id,
+        messageId: r.messageId,
+        participantId: r.participantId,
+        displayName: r.displayName,
+        emoji: r.emoji,
+        createdAt: r.createdAt.getTime(),
+      })) : [],
+    }));
   }
 }
