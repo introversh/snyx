@@ -19,6 +19,7 @@ import {
   X,
   Reply,
   Pencil,
+  UserX,
 } from 'lucide-react';
 import { useRoom } from '../hooks/useRoom';
 import YouTubePlayer, { YouTubePlayerRef } from '../components/YouTubePlayer';
@@ -49,6 +50,11 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     return null;
   }
 
+  const handleKicked = () => {
+    alert('You have been removed from this room by a participant.');
+    onNavigate('/');
+  };
+
   const {
     roomState,
     socketConnected,
@@ -70,7 +76,8 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     fetchOlderMessages,
     deleteChatMessage,
     editChatMessage,
-  } = useRoom(roomId);
+    removeUserFromRoom,
+  } = useRoom(roomId, handleKicked);
 
   const playerRef = useRef<YouTubePlayerRef | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
@@ -126,10 +133,22 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   const [invitedUserIds, setInvitedUserIds] = useState<Set<string>>(new Set());
   const [friendsLoading, setFriendsLoading] = useState(false);
 
+  // Room Members Management Modal State
+  const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+
   // Synchronous dragging flag to prevent race conditions during player updates
   const isDraggingRef = useRef(false);
   const isPlayingBusyRef = useRef(false);
   const [duration, setDuration] = useState(240);
+  const endedVideoIdRef = useRef<string | null>(null);
+
+  // Reset ended flag on track change
+  const currentVideoId = roomState?.currentVideoId;
+  useEffect(() => {
+    if (currentVideoId) {
+      endedVideoIdRef.current = null;
+    }
+  }, [currentVideoId]);
 
   // Drag & Drop reorder index state
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -254,20 +273,38 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     };
   }, [searchQuery]);
 
+  const clockOffsetRef = useRef<number>(0);
+  useEffect(() => {
+    if (roomState?.serverTime) {
+      clockOffsetRef.current = Date.now() - roomState.serverTime;
+    }
+  }, [roomState?.serverTime]);
+
   // Periodic Playback Synchronization & Drift Correction (Every 3 seconds)
   useEffect(() => {
     const interval = setInterval(() => {
       if (!roomState || !roomState.isPlaying || !playerRef.current) return;
 
       const player = playerRef.current;
-      const localTime = player.getCurrentTime();
+      const playerState = (player && typeof player.getPlayerState === 'function') ? player.getPlayerState() : -1;
       
-      const now = Date.now();
-      const elapsed = roomState.playbackStartedAt ? (now - roomState.playbackStartedAt) / 1000 : 0;
-      const expectedTime = roomState.position + elapsed;
+      // Only perform drift sync when player is actively playing (YT.PlayerState.PLAYING === 1)
+      if (playerState !== 1) return;
+
+      const localTime = player.getCurrentTime();
+      const currentDur = (player && typeof player.getDuration === 'function') ? player.getDuration() : duration;
+      
+      const nowServer = Date.now() - clockOffsetRef.current;
+      const elapsed = roomState.playbackStartedAt ? Math.max(0, (nowServer - roomState.playbackStartedAt) / 1000) : 0;
+      const expectedTime = Math.max(0, roomState.position + elapsed);
 
       const difference = localTime - expectedTime;
       const absDiff = Math.abs(difference);
+
+      // Suppress seek adjustments when near the end of a track (within 3.5s) to avoid forcing premature YouTube ENDED states
+      if (currentDur > 0 && (expectedTime >= currentDur - 3.5 || localTime >= currentDur - 3.5)) {
+        return;
+      }
 
       console.log(`[Sync] Local: ${localTime.toFixed(2)}s | Expected: ${expectedTime.toFixed(2)}s | Diff: ${difference.toFixed(2)}s`);
 
@@ -294,7 +331,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [roomState]);
+  }, [roomState, duration]);
 
   // Scroll to bottom helper for Chat
   const scrollToBottom = () => {
@@ -352,7 +389,19 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   // Handle Playback State changes from IFrame events
   const handlePlayerStateChange = (event: { data: number }) => {
     if (event.data === 0) {
-      sendPlaybackEnded();
+      const vid = roomState?.currentVideoId;
+      if (vid && endedVideoIdRef.current === vid) {
+        return;
+      }
+
+      const currentTime = playerRef.current ? playerRef.current.getCurrentTime() : localTime;
+      const dur = playerRef.current ? playerRef.current.getDuration() : duration;
+
+      // Only trigger PLAYBACK_ENDED if duration is valid (> 0) AND playback position is genuinely near the track's end (within 4 seconds)
+      if (dur > 0 && currentTime >= dur - 4.0) {
+        if (vid) endedVideoIdRef.current = vid;
+        sendPlaybackEnded();
+      }
     }
   };
 
@@ -756,13 +805,17 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                   {displayChannel}
                 </p>
               </div>
-              <div className="flex items-center gap-1.5 bg-white/5 border border-white/5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider text-neutral-300">
+              <button
+                onClick={() => setIsMembersModalOpen(true)}
+                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider text-neutral-300 transition duration-200 cursor-pointer active:scale-95"
+                title="Click to view and manage room participants"
+              >
                 <Users className="w-3 h-3 text-violet-400" />
                 <span className="font-bold text-white">
                   {roomState?.users.filter(u => u.isConnected).length || 1}
                 </span>
                 <span>online</span>
-              </div>
+              </button>
             </div>
 
             <div className="flex items-center gap-3 w-full">
@@ -1557,6 +1610,73 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Room Participants Modal (Allows anyone to remove users) */}
+      {isMembersModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn select-none">
+          <div className="bg-[#0e0e11] border border-white/10 rounded-3xl w-full max-w-md p-6 shadow-2xl relative">
+            <div className="flex justify-between items-center pb-4 border-b border-white/10 mb-4">
+              <div className="flex items-center gap-2.5">
+                <Users className="w-5 h-5 text-white" />
+                <h3 className="text-base font-extrabold text-white">Room Participants</h3>
+              </div>
+              <button
+                onClick={() => setIsMembersModalOpen(false)}
+                className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-full transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2 max-h-80 overflow-y-auto pr-1">
+              {roomState?.users && roomState.users.length > 0 ? (
+                roomState.users.map((u) => {
+                  const isSelf = u.participantId === participantId;
+                  return (
+                    <div
+                      key={u.participantId}
+                      className="flex items-center justify-between p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="relative flex items-center justify-center">
+                          <div className={`w-2.5 h-2.5 rounded-full ${u.isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-neutral-600'}`} />
+                        </div>
+                        <div>
+                          <span className="font-bold text-sm text-white block">
+                            {u.displayName} {isSelf && <span className="text-[10px] font-mono text-neutral-400 ml-1">(You)</span>}
+                          </span>
+                          <span className="text-[10px] text-neutral-500 font-mono">
+                            {u.isConnected ? 'Active now' : 'Disconnected'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {!isSelf && (
+                        <button
+                          onClick={() => {
+                            if (confirm(`Remove ${u.displayName} from this room?`)) {
+                              removeUserFromRoom(u.participantId);
+                            }
+                          }}
+                          className="px-3.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 rounded-xl text-xs font-bold flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                          title="Remove user from room"
+                        >
+                          <UserX className="w-3.5 h-3.5" />
+                          <span>Remove</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-center py-6 text-neutral-500 text-xs font-medium">
+                  No participants found.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -59,6 +59,7 @@ export interface RoomState {
   isPlaying: boolean;
   position: number;
   playbackStartedAt: number | null; // Server timestamp in ms
+  serverTime?: number; // Server timestamp in ms
   queue: QueueItem[];
   users: RoomUser[];
   chatMessages: ChatMessage[];
@@ -85,6 +86,8 @@ export const SocketEvents = {
   CHAT_REACTION: 'room:chat-reaction',
   CHAT_DELETE: 'room:chat-delete',
   CHAT_EDIT: 'room:chat-edit',
+  ROOM_USER_REMOVE: 'room:user-remove',
+  ROOM_USER_KICKED: 'room:user-kicked',
   ERROR: 'room:error'
 } as const;
 

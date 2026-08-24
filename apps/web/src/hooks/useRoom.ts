@@ -35,11 +35,13 @@ export function getOrCreateParticipant() {
   return { participantId, displayName, profilePicture: '' };
 }
 
-export function useRoom(roomId: string | null) {
+export function useRoom(roomId: string | null, onKicked?: () => void) {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const onKickedRef = useRef(onKicked);
+  onKickedRef.current = onKicked;
   const { participantId, displayName: storedDisplayName } = getOrCreateParticipant();
   const [displayName, setDisplayName] = useState(storedDisplayName);
 
@@ -151,6 +153,13 @@ export function useRoom(roomId: string | null) {
           ),
         };
       });
+    });
+
+    socket.on(SocketEvents.ROOM_USER_KICKED, (data: { message: string }) => {
+      setError(data.message || 'You have been removed from this room.');
+      if (onKickedRef.current) {
+        onKickedRef.current();
+      }
     });
 
     socket.on(SocketEvents.ERROR, (err: { message: string }) => {
@@ -328,6 +337,12 @@ export function useRoom(roomId: string | null) {
     }
   };
 
+  const removeUserFromRoom = (targetParticipantId: string) => {
+    if (socketRef.current && roomId) {
+      socketRef.current.emit(SocketEvents.ROOM_USER_REMOVE, { roomId, targetParticipantId });
+    }
+  };
+
   return {
     roomState,
     socketConnected,
@@ -350,5 +365,6 @@ export function useRoom(roomId: string | null) {
     fetchOlderMessages,
     deleteChatMessage,
     editChatMessage,
+    removeUserFromRoom,
   };
 }

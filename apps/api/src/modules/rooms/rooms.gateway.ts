@@ -81,6 +81,7 @@ export class RoomsGateway implements OnGatewayDisconnect {
         isPlaying: dbRoom.isPlaying,
         position: dbRoom.position,
         playbackStartedAt: dbRoom.playbackStartedAt ? dbRoom.playbackStartedAt.getTime() : null,
+        serverTime: Date.now(),
         queue: dbRoom.queue.map((item: any) => ({
           id: item.id,
           videoId: item.videoId,
@@ -353,6 +354,38 @@ export class RoomsGateway implements OnGatewayDisconnect {
       );
     }
 
+    await this.broadcastRoomState(cleanRoomId);
+  }
+
+  @SubscribeMessage(SocketEvents.ROOM_USER_REMOVE)
+  async handleRemoveUser(
+    @MessageBody() payload: { roomId: string; targetParticipantId: string },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { roomId, targetParticipantId } = payload;
+    const cleanRoomId = roomId.toUpperCase().trim();
+
+    const roomUsers = this.presence.get(cleanRoomId);
+    if (roomUsers) {
+      const targetUser = roomUsers.get(targetParticipantId);
+      if (targetUser) {
+        // Emit kicked event directly to target user's socket
+        this.server.to(targetUser.socketId).emit(SocketEvents.ROOM_USER_KICKED, {
+          message: 'You have been removed from this room by a participant.'
+        });
+
+        // Leave socket channel
+        const targetSocket = this.server.sockets.sockets.get(targetUser.socketId);
+        if (targetSocket) {
+          targetSocket.leave(cleanRoomId);
+        }
+
+        // Delete from room presence
+        roomUsers.delete(targetParticipantId);
+      }
+    }
+
+    console.log(`User [${targetParticipantId}] removed from room [${cleanRoomId}]`);
     await this.broadcastRoomState(cleanRoomId);
   }
 
