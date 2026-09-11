@@ -49,6 +49,9 @@ export class RoomsController {
           replyToId: msg.replyToId || undefined,
           replyToSenderName: msg.replyToSenderName || undefined,
           replyToContent: msg.replyToContent || undefined,
+          isEdited: Boolean(msg.isEdited),
+          isDelivered: Boolean(msg.isDelivered),
+          isRead: Boolean(msg.isRead),
           createdAt: msg.createdAt.getTime(),
           reactions: msg.reactions ? msg.reactions.map((r: any) => ({
             id: r.id,
@@ -84,6 +87,9 @@ export class RoomsController {
       replyToId: msg.replyToId || undefined,
       replyToSenderName: msg.replyToSenderName || undefined,
       replyToContent: msg.replyToContent || undefined,
+      isEdited: Boolean(msg.isEdited),
+      isDelivered: Boolean(msg.isDelivered),
+      isRead: Boolean(msg.isRead),
       createdAt: msg.createdAt.getTime(),
       reactions: msg.reactions ? msg.reactions.map((r: any) => ({
         id: r.id,

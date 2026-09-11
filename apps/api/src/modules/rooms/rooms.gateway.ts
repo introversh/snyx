@@ -18,21 +18,28 @@ import {
   QueueAddPayload,
   QueueRemovePayload,
 } from '@youtube-together/shared';
+import { AuthService } from '../auth/auth.service';
+
+const envOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [];
+const defaultOrigins = [
+  'https://snyx.netlify.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+];
+const allowedOrigins = new Set([...defaultOrigins, ...envOrigins]);
 
 @WebSocketGateway({
   cors: {
     origin: (origin: string, callback: (err: Error | null, allow?: boolean) => void) => {
       if (
         !origin ||
-        origin === 'https://snyx.netlify.app' ||
-        origin === 'http://localhost:5173' ||
-        origin.endsWith('.netlify.app') ||
-        origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:')
+        allowedOrigins.has(origin) ||
+        (process.env.NODE_ENV !== 'production' && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')))
       ) {
         callback(null, true);
       } else {
-        callback(null, false);
+        callback(new Error('Not allowed by CORS'), false);
       }
     },
     credentials: true,
@@ -46,7 +53,10 @@ export class RoomsGateway implements OnGatewayDisconnect {
   // roomId -> participantId -> RoomUser & { socketId: string }
   private presence = new Map<string, Map<string, RoomUser & { socketId: string }>>();
 
-  constructor(private roomsService: RoomsService) {}
+  constructor(
+    private roomsService: RoomsService,
+    private authService: AuthService
+  ) {}
 
   async handleDisconnect(client: Socket) {
     for (const [roomId, users] of this.presence.entries()) {
@@ -153,17 +163,40 @@ export class RoomsGateway implements OnGatewayDisconnect {
         return;
       }
 
+      // Verify token if available in handshake or payload
+      const token = (client.handshake?.auth?.token || (payload as any)?.token) as string | undefined;
+      let verifiedUserId = participantId;
+      let verifiedDisplayName = displayName;
+
+      if (token) {
+        try {
+          const decoded = this.authService.verifyToken(token);
+          if (decoded && decoded.userId) {
+            verifiedUserId = decoded.userId;
+            if (decoded.username) {
+              verifiedDisplayName = displayName || decoded.username;
+            }
+          }
+        } catch (e) {
+          // Fall back to participantId
+        }
+      }
+
+      client.data.userId = verifiedUserId;
+      client.data.displayName = verifiedDisplayName;
+      client.data.roomId = cleanRoomId;
+
       // Add/Update user details
-      roomUsers.set(participantId, {
-        participantId,
-        displayName,
+      roomUsers.set(verifiedUserId, {
+        participantId: verifiedUserId,
+        displayName: verifiedDisplayName,
         isConnected: true,
         socketId: client.id,
       });
 
       // Join client to Socket.IO room channel
       client.join(cleanRoomId);
-      console.log(`User [${displayName}] joined room [${cleanRoomId}]`);
+      console.log(`User [${verifiedDisplayName}] joined room [${cleanRoomId}]`);
 
       // Broadcast updated room state
       await this.broadcastRoomState(cleanRoomId);
@@ -488,17 +521,33 @@ export class RoomsGateway implements OnGatewayDisconnect {
   ) {
     const { roomId, senderId, senderName, senderAvatar, content, replyToId, replyToSenderName, replyToContent } = payload;
     const cleanRoomId = roomId.toUpperCase().trim();
+    const cleanContent = content ? content.trim() : '';
+
+    if (!cleanContent || cleanContent.length > 2000) {
+      return;
+    }
+
+    const verifiedSenderId = client.data?.userId || senderId;
+    const verifiedSenderName = client.data?.displayName || senderName;
+
+    // Check if other participants are actively connected in the room
+    const roomUsers = this.presence.get(cleanRoomId);
+    const otherConnectedUsers = roomUsers
+      ? Array.from(roomUsers.values()).filter(u => u.isConnected && u.participantId !== verifiedSenderId)
+      : [];
+    const isDelivered = otherConnectedUsers.length > 0;
 
     try {
       const msg = await this.roomsService.createChatMessage(
         cleanRoomId,
-        senderId,
-        senderName,
-        content,
+        verifiedSenderId,
+        verifiedSenderName,
+        cleanContent,
         senderAvatar,
         replyToId,
         replyToSenderName,
-        replyToContent
+        replyToContent,
+        isDelivered
       );
 
       // Broadcast chat message instantly to all connected client sockets in the room
@@ -512,6 +561,9 @@ export class RoomsGateway implements OnGatewayDisconnect {
         replyToId: msg.replyToId || undefined,
         replyToSenderName: msg.replyToSenderName || undefined,
         replyToContent: msg.replyToContent || undefined,
+        isEdited: Boolean(msg.isEdited),
+        isDelivered: Boolean(msg.isDelivered),
+        isRead: Boolean(msg.isRead),
         createdAt: msg.createdAt.getTime(),
         reactions: msg.reactions ? msg.reactions.map((r: any) => ({
           id: r.id,
@@ -524,6 +576,46 @@ export class RoomsGateway implements OnGatewayDisconnect {
       });
     } catch (err) {
       console.error(`Error creating/broadcasting chat message in room ${roomId}:`, err);
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.CHAT_TYPING)
+  async handleChatTyping(
+    @MessageBody() payload: { roomId: string; isTyping: boolean; participantId?: string; displayName?: string },
+    @ConnectedSocket() client: Socket
+  ) {
+    const cleanRoomId = payload.roomId?.toUpperCase().trim();
+    if (!cleanRoomId) return;
+    const verifiedSenderId = client.data?.userId || payload.participantId;
+    const verifiedSenderName = client.data?.displayName || payload.displayName;
+
+    // Broadcast typing status to everyone else in the room
+    client.to(cleanRoomId).emit(SocketEvents.CHAT_TYPING, {
+      roomId: cleanRoomId,
+      participantId: verifiedSenderId,
+      displayName: verifiedSenderName,
+      isTyping: Boolean(payload.isTyping),
+    });
+  }
+
+  @SubscribeMessage(SocketEvents.CHAT_READ)
+  async handleChatRead(
+    @MessageBody() payload: { roomId: string; participantId?: string; messageIds?: string[] },
+    @ConnectedSocket() client: Socket
+  ) {
+    const cleanRoomId = payload.roomId?.toUpperCase().trim();
+    if (!cleanRoomId) return;
+    const verifiedReaderId = client.data?.userId || payload.participantId;
+
+    try {
+      await this.roomsService.markMessagesAsRead(cleanRoomId, verifiedReaderId, payload.messageIds);
+      this.server.to(cleanRoomId).emit(SocketEvents.CHAT_READ, {
+        roomId: cleanRoomId,
+        readerParticipantId: verifiedReaderId,
+        messageIds: payload.messageIds,
+      });
+    } catch (err) {
+      console.error(`Error marking messages as read in room ${cleanRoomId}:`, err);
     }
   }
 
@@ -540,13 +632,15 @@ export class RoomsGateway implements OnGatewayDisconnect {
   ) {
     const { roomId, messageId, participantId, displayName, emoji } = payload;
     const cleanRoomId = roomId.toUpperCase().trim();
+    const verifiedParticipantId = client.data?.userId || participantId;
+    const verifiedDisplayName = client.data?.displayName || displayName;
 
     try {
       const result = await this.roomsService.toggleReaction(
         cleanRoomId,
         messageId,
-        participantId,
-        displayName,
+        verifiedParticipantId,
+        verifiedDisplayName,
         emoji
       );
 
@@ -573,9 +667,10 @@ export class RoomsGateway implements OnGatewayDisconnect {
   ) {
     const { roomId, messageId, participantId } = payload;
     const cleanRoomId = roomId.toUpperCase().trim();
+    const verifiedParticipantId = client.data?.userId || participantId;
 
     try {
-      const deleted = await this.roomsService.deleteChatMessage(cleanRoomId, messageId, participantId);
+      const deleted = await this.roomsService.deleteChatMessage(cleanRoomId, messageId, verifiedParticipantId);
       if (deleted) {
         this.server.to(cleanRoomId).emit(SocketEvents.CHAT_DELETE, { messageId });
       }
@@ -591,9 +686,16 @@ export class RoomsGateway implements OnGatewayDisconnect {
   ) {
     const { roomId, messageId, participantId, newContent } = payload;
     const cleanRoomId = roomId.toUpperCase().trim();
+    const cleanContent = newContent ? newContent.trim() : '';
+
+    if (!cleanContent || cleanContent.length > 2000) {
+      return;
+    }
+
+    const verifiedParticipantId = client.data?.userId || participantId;
 
     try {
-      const updated = await this.roomsService.editChatMessage(cleanRoomId, messageId, participantId, newContent);
+      const updated = await this.roomsService.editChatMessage(cleanRoomId, messageId, verifiedParticipantId, cleanContent);
       if (updated) {
         this.server.to(cleanRoomId).emit(SocketEvents.CHAT_EDIT, {
           messageId: updated.id,

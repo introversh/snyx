@@ -5,18 +5,29 @@ import ProfilePage from './pages/ProfilePage';
 
 function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
-  const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('snyx_user'));
+  const checkUserLoggedIn = (): boolean => {
+    try {
+      const stored = localStorage.getItem('snyx_user');
+      if (!stored) return false;
+      const parsed = JSON.parse(stored);
+      return !!(parsed && parsed.userId && parsed.token);
+    } catch {
+      return false;
+    }
+  };
+
+  const [isLoggedIn, setIsLoggedIn] = useState(checkUserLoggedIn);
 
   useEffect(() => {
     const handleLocationChange = () => {
       setCurrentPath(window.location.pathname);
-      setIsLoggedIn(!!localStorage.getItem('snyx_user'));
+      setIsLoggedIn(checkUserLoggedIn());
     };
 
     window.addEventListener('popstate', handleLocationChange);
     
     const handleAuthChange = () => {
-      setIsLoggedIn(!!localStorage.getItem('snyx_user'));
+      setIsLoggedIn(checkUserLoggedIn());
     };
     window.addEventListener('snyx_auth_change', handleAuthChange);
 
@@ -29,10 +40,10 @@ function App() {
   const navigateTo = (path: string) => {
     window.history.pushState({}, '', path);
     setCurrentPath(path);
-    setIsLoggedIn(!!localStorage.getItem('snyx_user'));
+    setIsLoggedIn(checkUserLoggedIn());
   };
 
-  const hasUser = isLoggedIn || !!localStorage.getItem('snyx_user');
+  const hasUser = isLoggedIn || checkUserLoggedIn();
 
   // Route matching
   const roomMatch = currentPath.match(/^\/room\/([A-Za-z0-9-]+)$/);
@@ -50,9 +61,10 @@ function App() {
     }, 0);
   }
 
-  const isRoot = currentPath === '/' || currentPath === '';
-  if (!isRoot && hasUser) {
-    const username = currentPath.substring(1);
+  // Match username profile routes (alphanumeric and underscore, length 3 to 30)
+  const profileMatch = currentPath.match(/^\/([a-zA-Z0-9_]{3,30})$/);
+  if (profileMatch && hasUser) {
+    const username = profileMatch[1];
     return <ProfilePage username={username} onNavigate={navigateTo} />;
   }
 

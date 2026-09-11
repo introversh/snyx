@@ -14,9 +14,51 @@ export interface SearchResponse {
   nextPageToken?: string;
 }
 
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+class BoundedTtlCache<T> {
+  private map = new Map<string, CacheEntry<T>>();
+  constructor(private maxEntries: number = 100, private defaultTtlMs: number = 30 * 60 * 1000) {}
+
+  get(key: string): T | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (Date.now() > entry.expiresAt) {
+      this.map.delete(key);
+      return undefined;
+    }
+    // Refresh LRU order: delete & re-insert
+    this.map.delete(key);
+    this.map.set(key, entry);
+    return entry.value;
+  }
+
+  set(key: string, value: T, ttlMs?: number): void {
+    if (this.map.has(key)) {
+      this.map.delete(key);
+    } else if (this.map.size >= this.maxEntries) {
+      const oldestKey = this.map.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.map.delete(oldestKey);
+      }
+    }
+    this.map.set(key, {
+      value,
+      expiresAt: Date.now() + (ttlMs ?? this.defaultTtlMs),
+    });
+  }
+
+  has(key: string): boolean {
+    return this.get(key) !== undefined;
+  }
+}
+
 @Injectable()
 export class YoutubeService {
-  private cache = new Map<string, SearchResponse>();
+  private cache = new BoundedTtlCache<SearchResponse>(100, 30 * 60 * 1000);
   private readonly apiKey = process.env.YOUTUBE_API_KEY;
 
   // A premium collection of royalty-free lofi/synthwave tracks for offline/missing key testing
@@ -130,6 +172,9 @@ export class YoutubeService {
 
   async getVideo(videoId: string): Promise<SearchResultItem> {
     const cleanId = videoId.trim();
+    if (!/^[A-Za-z0-9_-]{11}$/.test(cleanId)) {
+      throw new HttpException('Invalid YouTube video ID format', HttpStatus.BAD_REQUEST);
+    }
 
     if (!this.apiKey) {
       const found = this.mockSongs.find((s) => s.videoId === cleanId);

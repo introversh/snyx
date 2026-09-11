@@ -10,7 +10,7 @@ export class SocialService {
     if (userAId === userBId) return 'SELF';
 
     const u1 = userAId < userBId ? userAId : userBId;
-    const u2 = userAId < userBId ? userAId : userAId;
+    const u2 = userAId < userBId ? userBId : userAId;
 
     // 1. Check if already mutual friends
     const friendship = await this.prisma.friendship.findFirst({
@@ -397,9 +397,20 @@ export class SocialService {
 
   // Send a private direct message
   async sendDirectMessage(senderId: string, receiverId: string, content: string) {
-    if (!content.trim()) {
+    if (!content || !content.trim()) {
       throw new ConflictException('Message content cannot be empty.');
     }
+    if (content.length > 2000) {
+      throw new ConflictException('Message content exceeds maximum length of 2000 characters.');
+    }
+    const receiver = await this.prisma.user.findUnique({
+      where: { id: receiverId },
+      select: { id: true },
+    });
+    if (!receiver) {
+      throw new NotFoundException('Receiver user not found.');
+    }
+
     return this.prisma.directMessage.create({
       data: {
         senderId,
@@ -411,6 +422,14 @@ export class SocialService {
 
   // Send watchroom invitation
   async createRoomInvite(senderId: string, receiverId: string, roomId: string) {
+    const receiver = await this.prisma.user.findUnique({
+      where: { id: receiverId },
+      select: { id: true },
+    });
+    if (!receiver) {
+      throw new NotFoundException('Receiver user not found.');
+    }
+
     return this.prisma.roomInvite.create({
       data: {
         senderId,

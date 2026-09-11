@@ -9,10 +9,13 @@ interface LandingPageProps {
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
 
-// Facebook-style default silhouette SVGs based on gender
+// Facebook-style default silhouette SVGs based on gender with safe URI validation
 export const getAvatarUrl = (userPic?: string, gender?: string) => {
   if (userPic && userPic.trim()) {
-    return userPic;
+    const trimmed = userPic.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:image/')) {
+      return trimmed;
+    }
   }
   if (gender === 'female') {
     return `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='100%25' height='100%25' fill='%23fceef2'/><circle cx='12' cy='9' r='4.5' fill='%23e67e9f'/><path d='M12 15c-4.5 0-7.5 2.5-7.5 5v1h15v-1c0-2.5-3-5-7.5-5z' fill='%23e67e9f'/></svg>`;
@@ -160,6 +163,9 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
     setAuthLoading(true);
     const endpoint = authMode === 'signup' ? 'signup' : 'login';
+    const authPayload = authMode === 'signup'
+      ? { username, password, gender: genderInput }
+      : { username, password };
 
     try {
       const response = await fetch(`${API_BASE_URL}/auth/${endpoint}`, {
@@ -167,7 +173,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username, password, gender: genderInput }),
+        body: JSON.stringify(authPayload),
       });
 
       const data = await response.json();
@@ -427,7 +433,7 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
       {/* Footer */}
       <footer className="text-center text-[10px] text-neutral-500 font-mono tracking-widest py-4 max-w-4xl mx-auto w-full border-t border-white/10">
-        <p>&copy; {new Date().getFullYear()} SNYX. MONOCHROME PLATFORM CONTRACT v1.5.0</p>
+        <p>&copy; {new Date().getFullYear()} SNYX: Built With Intent !</p>
       </footer>
     </div>
   );

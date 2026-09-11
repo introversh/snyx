@@ -20,6 +20,10 @@ import {
   Reply,
   Pencil,
   UserX,
+  Check,
+  CheckCheck,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { useRoom } from '../hooks/useRoom';
 import YouTubePlayer, { YouTubePlayerRef } from '../components/YouTubePlayer';
@@ -35,20 +39,20 @@ interface RoomPageProps {
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
 
 export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
-  // Strict Login Check - redirect immediately if not logged in
+  // Parse current user safely without violating Rules of Hooks
   const storedUserStr = localStorage.getItem('snyx_user');
-  if (!storedUserStr) {
-    onNavigate('/');
-    return null;
-  }
-
   let currentUser: any = null;
   try {
-    currentUser = JSON.parse(storedUserStr);
-  } catch (e) {
-    onNavigate('/');
-    return null;
-  }
+    if (storedUserStr) {
+      currentUser = JSON.parse(storedUserStr);
+    }
+  } catch (e) {}
+
+  useEffect(() => {
+    if (!currentUser || !currentUser.token) {
+      onNavigate('/');
+    }
+  }, [currentUser?.token]);
 
   const handleKicked = () => {
     alert('You have been removed from this room by a participant.');
@@ -77,12 +81,20 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     deleteChatMessage,
     editChatMessage,
     removeUserFromRoom,
-  } = useRoom(roomId, handleKicked);
+    typingUser,
+    sendTyping,
+    markChatRead,
+  } = useRoom(currentUser ? roomId : null, handleKicked);
 
   const playerRef = useRef<YouTubePlayerRef | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const typingDebounceRef = useRef<any>(null);
 
   // Local UI States
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const controlsTimerRef = useRef<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -280,10 +292,17 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     }
   }, [roomState?.serverTime]);
 
+  const roomStateRef = useRef(roomState);
+  roomStateRef.current = roomState;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
+
   // Periodic Playback Synchronization & Drift Correction (Every 3 seconds)
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!roomState || !roomState.isPlaying || !playerRef.current) return;
+      const currentRoomState = roomStateRef.current;
+      const currentDurState = durationRef.current;
+      if (!currentRoomState || !currentRoomState.isPlaying || !playerRef.current) return;
 
       const player = playerRef.current;
       const playerState = (player && typeof player.getPlayerState === 'function') ? player.getPlayerState() : -1;
@@ -292,11 +311,11 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
       if (playerState !== 1) return;
 
       const localTime = player.getCurrentTime();
-      const currentDur = (player && typeof player.getDuration === 'function') ? player.getDuration() : duration;
+      const currentDur = (player && typeof player.getDuration === 'function') ? player.getDuration() : currentDurState;
       
       const nowServer = Date.now() - clockOffsetRef.current;
-      const elapsed = roomState.playbackStartedAt ? Math.max(0, (nowServer - roomState.playbackStartedAt) / 1000) : 0;
-      const expectedTime = Math.max(0, roomState.position + elapsed);
+      const elapsed = currentRoomState.playbackStartedAt ? Math.max(0, (nowServer - currentRoomState.playbackStartedAt) / 1000) : 0;
+      const expectedTime = Math.max(0, currentRoomState.position + elapsed);
 
       const difference = localTime - expectedTime;
       const absDiff = Math.abs(difference);
@@ -331,7 +350,73 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [roomState, duration]);
+  }, []);
+
+  // Listen to browser fullscreen changes to keep isFullscreen state in sync
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = Boolean(
+        document.fullscreenElement || (document as any).webkitFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  // Fullscreen Toggle Handler
+  const toggleFullscreen = () => {
+    const isCurrentlyFullscreen = Boolean(
+      document.fullscreenElement || (document as any).webkitFullscreenElement
+    );
+
+    if (!isCurrentlyFullscreen) {
+      const elem = videoContainerRef.current || document.documentElement;
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen().catch(() => setIsFullscreen(true));
+      } else if ((elem as any).webkitRequestFullscreen) {
+        (elem as any).webkitRequestFullscreen();
+      } else {
+        setIsFullscreen(true);
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+      setIsFullscreen(false);
+    }
+  };
+
+  // Handle User Activity for In-Frame Video Controls (2.5s Auto-Hide like YouTube)
+  const handleUserActivity = () => {
+    setShowControls(true);
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    if (roomState?.isPlaying) {
+      controlsTimerRef.current = setTimeout(() => {
+        setShowControls(false);
+      }, 2500);
+    }
+  };
+
+  // Sync controls visibility with playback state
+  useEffect(() => {
+    if (roomState?.isPlaying) {
+      handleUserActivity();
+    } else {
+      setShowControls(true);
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    }
+    return () => {
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    };
+  }, [roomState?.isPlaying]);
 
   // Scroll to bottom helper for Chat
   const scrollToBottom = () => {
@@ -342,13 +427,14 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     }, 50);
   };
 
-  // Manage unread badges and auto-scroll on new chat messages
+  // Manage unread badges, read receipts, and auto-scroll on new chat messages
   useEffect(() => {
     const messagesCount = roomState?.chatMessages?.length || 0;
     if (messagesCount > prevMessagesCountRef.current) {
       if (activeSidebarTab !== 'chat') {
         setUnreadCount((prev) => prev + (messagesCount - prevMessagesCountRef.current));
       } else {
+        markChatRead();
         scrollToBottom();
       }
     }
@@ -359,6 +445,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   useEffect(() => {
     if (activeSidebarTab === 'chat') {
       setUnreadCount(0);
+      markChatRead();
       scrollToBottom();
     }
   }, [activeSidebarTab]);
@@ -586,6 +673,22 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     return elapsedMs <= 2 * 60 * 1000;
   };
 
+  // Chat Input Typing Emitter
+  const handleChatInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setChatInput(val);
+    if (val.trim()) {
+      sendTyping(true);
+      if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+      typingDebounceRef.current = setTimeout(() => {
+        sendTyping(false);
+      }, 2500);
+    } else {
+      sendTyping(false);
+      if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+    }
+  };
+
   // Send or Edit Chat Message
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
@@ -599,6 +702,9 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
       setReplyTarget(null);
     }
     setChatInput('');
+    sendTyping(false);
+    if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current);
+    scrollToBottom();
   };
 
   // Handle local file uploads inside room settings (Base64 encoding)
@@ -714,13 +820,16 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   const displayChannel = roomState?.currentVideoId ? (roomState.currentVideoThumbnail?.includes('unsplash') ? 'Royalty Free' : 'YouTube') : 'Select a song below to start';
 
   // Fallbacks
-  const defaultAvatar = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=60&h=60&fit=crop&q=80';
   const defaultBanner = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&fit=crop&q=80';
 
   // Format Notification Badge count text
   let unreadBadgeText = '';
   if (unreadCount > 0) {
     unreadBadgeText = unreadCount > 5 ? '5+ new messages' : `${unreadCount} new message${unreadCount > 1 ? 's' : ''}`;
+  }
+
+  if (!currentUser) {
+    return null;
   }
 
   return (
@@ -772,16 +881,208 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
         
         {/* Left Side */}
         <section className="lg:col-span-7 flex flex-col gap-6">
-          <div className="relative aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/10 group">
+          <div
+            ref={videoContainerRef}
+            onMouseMove={handleUserActivity}
+            onTouchStart={handleUserActivity}
+            className={`relative bg-black transition-all duration-300 select-none overflow-hidden ${
+              isFullscreen
+                ? `fixed inset-0 z-[100] w-screen h-screen rounded-none border-none flex items-center justify-center ${
+                    showControls ? 'cursor-default' : 'cursor-none'
+                  }`
+                : 'aspect-video rounded-3xl shadow-2xl border border-white/10 group'
+            }`}
+          >
             {roomState?.currentVideoId ? (
-              <YouTubePlayer
-                ref={playerRef}
-                videoId={roomState.currentVideoId}
-                isPlaying={roomState.isPlaying}
-                volume={isMuted ? 0 : volume}
-                onStateChange={handlePlayerStateChange}
-                onTimeUpdate={handleTimeUpdate}
-              />
+              <>
+                <YouTubePlayer
+                  ref={playerRef}
+                  videoId={roomState.currentVideoId}
+                  isPlaying={roomState.isPlaying}
+                  volume={isMuted ? 0 : volume}
+                  onStateChange={handlePlayerStateChange}
+                  onTimeUpdate={handleTimeUpdate}
+                />
+
+                {/* Clickable Transparent Backdrop Layer for Single-Click Play/Pause & Activity detection */}
+                <div
+                  onClick={() => {
+                    handlePlayPause();
+                    handleUserActivity();
+                  }}
+                  className="absolute inset-0 z-10 cursor-pointer"
+                />
+
+                {/* In-Frame YouTube-Style Controls Overlay with 2.5s Inactivity Auto-Fade */}
+                <div
+                  className={`absolute inset-0 z-20 flex flex-col justify-between p-4 sm:p-6 bg-gradient-to-t from-black/90 via-black/20 to-black/70 transition-opacity duration-300 pointer-events-none ${
+                    showControls ? 'opacity-100' : 'opacity-0'
+                  }`}
+                >
+                  {/* Top Video Header Overlay */}
+                  <div className="flex justify-between items-start gap-4 pointer-events-auto">
+                    <div className="space-y-0.5 max-w-[70%]">
+                      <h3 className="font-bold text-white text-xs sm:text-base md:text-lg line-clamp-1 drop-shadow-md">
+                        {displayTitle}
+                      </h3>
+                      <p className="text-[9px] sm:text-xs text-neutral-400 font-semibold uppercase tracking-wider">
+                        {displayChannel}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {isFullscreen && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsMembersModalOpen(true);
+                            handleUserActivity();
+                          }}
+                          className="flex items-center gap-1.5 bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 px-3 py-1.5 rounded-full text-xs font-bold text-white transition active:scale-95 cursor-pointer shadow-lg"
+                        >
+                          <Users className="w-3.5 h-3.5 text-violet-400" />
+                          <span>{roomState?.users.filter((u) => u.isConnected).length || 1}</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFullscreen();
+                          handleUserActivity();
+                        }}
+                        className="p-2.5 bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-white rounded-full transition active:scale-95 cursor-pointer shadow-lg"
+                        title={isFullscreen ? 'Exit Fullscreen (Esc)' : 'Fullscreen'}
+                      >
+                        {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Center Giant Play/Pause Quick Tap Indicator */}
+                  <div className="flex items-center justify-center pointer-events-auto">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePlayPause();
+                        handleUserActivity();
+                      }}
+                      className="w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 bg-black/60 hover:bg-black/80 active:scale-90 backdrop-blur-md border border-white/25 text-white rounded-full flex items-center justify-center shadow-2xl transition hover:scale-105 cursor-pointer"
+                    >
+                      {roomState.isPlaying ? (
+                        <Pause className="w-6 h-6 sm:w-8 sm:h-8 fill-current text-white" />
+                      ) : (
+                        <Play className="w-6 h-6 sm:w-8 sm:h-8 fill-current text-white ml-1" />
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Bottom Scrubbing Progress & Controls Bar */}
+                  <div className="space-y-2 pointer-events-auto">
+                    {/* Progress / Seek Slider */}
+                    <div className="flex items-center gap-2 w-full group/seek">
+                      <input
+                        type="range"
+                        min="0"
+                        max={duration || 1}
+                        step="0.1"
+                        value={isDraggingProgress ? dragProgress : localTime}
+                        onMouseDown={handleSeekStart}
+                        onTouchStart={handleSeekStart}
+                        onChange={handleSeekChange}
+                        onMouseUp={() => {
+                          handleSeekEnd();
+                          handleUserActivity();
+                        }}
+                        onTouchEnd={() => {
+                          handleSeekEnd();
+                          handleUserActivity();
+                        }}
+                        className="w-full h-1.5 group-hover/seek:h-2 bg-white/25 rounded-lg appearance-none cursor-pointer accent-violet-400 transition-all duration-150"
+                      />
+                    </div>
+
+                    <div className="flex justify-between items-center text-white">
+                      {/* Play, Next, Volume, Time */}
+                      <div className="flex items-center gap-2 sm:gap-3">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePlayPause();
+                            handleUserActivity();
+                          }}
+                          className="p-2 hover:bg-white/15 rounded-full transition cursor-pointer active:scale-95"
+                        >
+                          {roomState.isPlaying ? (
+                            <Pause className="w-4.5 h-4.5 sm:w-5 sm:h-5 fill-current" />
+                          ) : (
+                            <Play className="w-4.5 h-4.5 sm:w-5 sm:h-5 fill-current ml-0.5" />
+                          )}
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            nextVideo();
+                            handleUserActivity();
+                          }}
+                          disabled={!roomState || roomState.queue.length === 0}
+                          className="p-2 hover:bg-white/15 rounded-full disabled:opacity-30 transition cursor-pointer active:scale-95"
+                          title="Next track"
+                        >
+                          <SkipForward className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                        </button>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIsMuted(!isMuted);
+                              handleUserActivity();
+                            }}
+                            className="p-2 hover:bg-white/15 rounded-full transition cursor-pointer"
+                          >
+                            {isMuted || volume === 0 ? (
+                              <VolumeX className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                            ) : (
+                              <Volume2 className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+                            )}
+                          </button>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={isMuted ? 0 : volume}
+                            onChange={(e) => {
+                              setVolume(parseInt(e.target.value, 10));
+                              handleUserActivity();
+                            }}
+                            className="w-14 sm:w-20 md:w-24 h-1 bg-white/25 rounded appearance-none cursor-pointer accent-white"
+                          />
+                        </div>
+
+                        <span className="text-[10px] sm:text-xs font-mono text-neutral-300 ml-1">
+                          {formatTime(isDraggingProgress ? dragProgress : localTime)} / {formatTime(duration)}
+                        </span>
+                      </div>
+
+                      {/* Right side fullscreen expand */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFullscreen();
+                            handleUserActivity();
+                          }}
+                          className="p-2 hover:bg-white/15 rounded-full transition cursor-pointer active:scale-95"
+                          title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                        >
+                          {isFullscreen ? <Minimize2 className="w-4.5 h-4.5 sm:w-5 sm:h-5" /> : <Maximize2 className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-[#07080f]">
                 <div className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 mb-4 animate-pulse">
@@ -805,17 +1106,30 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                   {displayChannel}
                 </p>
               </div>
-              <button
-                onClick={() => setIsMembersModalOpen(true)}
-                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider text-neutral-300 transition duration-200 cursor-pointer active:scale-95"
-                title="Click to view and manage room participants"
-              >
-                <Users className="w-3 h-3 text-violet-400" />
-                <span className="font-bold text-white">
-                  {roomState?.users.filter(u => u.isConnected).length || 1}
-                </span>
-                <span>online</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsMembersModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider text-neutral-300 transition duration-200 cursor-pointer active:scale-95"
+                  title="Click to view and manage room participants"
+                >
+                  <Users className="w-3 h-3 text-violet-400" />
+                  <span className="font-bold text-white">
+                    {roomState?.users.filter(u => u.isConnected).length || 1}
+                  </span>
+                  <span>online</span>
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('snyx_active_room_id');
+                    onNavigate('/');
+                  }}
+                  className="flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider text-red-400 hover:text-red-300 transition duration-200 cursor-pointer active:scale-95"
+                  title="Exit Room and return to home"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>Exit Room</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-3 w-full">
@@ -881,7 +1195,19 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                   <SkipForward className="w-4 h-4" />
                 </button>
               </div>
-              <div className="w-[100px] hidden sm:block" />
+
+              {/* Fullscreen Expand Action in Controls Bar */}
+              <div className="flex items-center justify-end">
+                <button
+                  onClick={toggleFullscreen}
+                  disabled={!roomState?.currentVideoId}
+                  className="p-2.5 text-neutral-400 hover:text-white bg-white/5 border border-white/10 hover:bg-white/10 disabled:opacity-30 rounded-xl transition duration-200 flex items-center gap-1.5 text-xs font-semibold active:scale-95"
+                  title={isFullscreen ? 'Exit Fullscreen' : 'Expand Player Fullscreen'}
+                >
+                  {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  <span className="hidden sm:inline">{isFullscreen ? 'Exit Full' : 'Fullscreen'}</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -999,7 +1325,9 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                   {roomState?.chatMessages && roomState.chatMessages.length > 0 ? (
                     roomState.chatMessages.map((msg) => {
                       const isOwn = msg.senderId === participantId;
-                      const avatar = msg.senderAvatar || defaultAvatar;
+                      const avatar = isOwn
+                        ? getAvatarUrl(currentUser?.profilePicture || msg.senderAvatar, currentUser?.gender)
+                        : getAvatarUrl(msg.senderAvatar);
                       const isHighlighted = msg.id === highlightedMsgId;
                       
                       return (
@@ -1032,8 +1360,8 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                               src={avatar}
                               alt={msg.senderName}
                               onClick={() => navigateToProfile(msg.senderId)}
-                              className="w-8 h-8 object-cover border border-white/10 rounded-full shrink-0 shadow-md cursor-pointer hover:border-violet-500 transition"
-                              title="View Profile Page"
+                              className="w-8 h-8 object-cover border border-white/10 rounded-full shrink-0 shadow-md cursor-pointer hover:border-violet-500 transition mt-0.5"
+                              title={`View @${msg.senderName}'s Profile`}
                             />
                           )}
                           
@@ -1072,12 +1400,37 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                               )}
 
                               <p className="break-words font-medium pr-4">{msg.content}</p>
-                              <span className={`block text-[8px] text-right mt-1 font-mono leading-none ${
+                              <div className={`flex items-center justify-end gap-1 mt-1 leading-none ${
                                 isOwn ? 'text-indigo-200' : 'text-neutral-550'
                               }`}>
-                                {formatMsgTime(msg.createdAt)}
-                                {msg.isEdited && <span className="ml-1 italic font-sans text-neutral-300 opacity-80 font-normal">(edited)</span>}
-                              </span>
+                                <span className="text-[8px] font-mono">
+                                  {formatMsgTime(msg.createdAt)}
+                                </span>
+                                {msg.isEdited && <span className="text-[8px] italic font-sans text-neutral-300 opacity-80 font-normal">(edited)</span>}
+                                
+                                {/* WhatsApp Ticks Mechanism for Sent Messages */}
+                                {isOwn && (
+                                  <span className="inline-flex items-center ml-0.5" title={
+                                    msg.status === 'sending'
+                                      ? 'Sending...'
+                                      : msg.isRead
+                                      ? 'Read'
+                                      : msg.isDelivered
+                                      ? 'Delivered'
+                                      : 'Sent'
+                                  }>
+                                    {msg.status === 'sending' ? (
+                                      <Clock className="w-2.5 h-2.5 text-indigo-200 animate-spin" />
+                                    ) : msg.isRead ? (
+                                      <CheckCheck className="w-3.5 h-3.5 text-sky-300 stroke-[2.5]" />
+                                    ) : msg.isDelivered ? (
+                                      <CheckCheck className="w-3.5 h-3.5 text-indigo-200/90 stroke-[2]" />
+                                    ) : (
+                                      <Check className="w-3.5 h-3.5 text-indigo-200/70 stroke-[2]" />
+                                    )}
+                                  </span>
+                                )}
+                              </div>
 
                               {/* WhatsApp / Instagram Floating Reaction Badge Pinned to Bubble Corner */}
                               {msg.reactions && msg.reactions.length > 0 && (() => {
@@ -1149,6 +1502,19 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                       <p className="text-[10px] text-neutral-550 mt-1.5 max-w-[180px] leading-normal font-medium">
                         Type a message below to start chatting instantly with your roommate!
                       </p>
+                    </div>
+                  )}
+
+                  {/* Typing Indicator in Chat Stream */}
+                  {typingUser && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-2xl w-fit animate-fadeIn select-none mt-2 mb-1">
+                      <span className="text-[10px] font-bold text-violet-400 truncate max-w-[120px]">{typingUser}</span>
+                      <span className="text-[9px] text-neutral-400 font-medium">is typing</span>
+                      <div className="flex items-center gap-1 ml-0.5">
+                        <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                        <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                        <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-bounce" />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1284,7 +1650,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
                     type="text"
                     placeholder="Type message..."
                     value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
+                    onChange={handleChatInputChange}
                     className="flex-grow bg-white/5 border border-white/10 focus:border-white/20 text-white px-4 py-2.5 rounded-2xl outline-none text-xs focus:bg-white/[0.08] transition duration-200"
                   />
                   <button
@@ -1683,7 +2049,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
 
       {/* Footer */}
       <footer className="text-center py-6 border-t border-white/5 text-[9px] font-mono tracking-widest text-neutral-600 bg-[#05060f]/60 backdrop-blur-md">
-        sNyx Room: {roomId} &bull; Authoritative Synchronization Protocol v1.2.0
+        sNyx Room: {roomId} &bull; Built with Intent !
       </footer>
     </div>
   );

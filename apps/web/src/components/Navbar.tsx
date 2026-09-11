@@ -73,13 +73,26 @@ export default function Navbar({ onNavigate, roomId, socketConnected, onOpenInbo
           <div className="flex items-center gap-3">
             {/* Room Share button if inside watchroom */}
             {roomId && (
-              <button
-                onClick={handleCopyLink}
-                className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 rounded-full text-xs font-bold text-slate-200 transition active:scale-95"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-white" /> : <Share2 className="w-3.5 h-3.5" />}
-                <span>{copied ? 'Copied Link' : `Room: ${roomId}`}</span>
-              </button>
+              <>
+                <button
+                  onClick={handleCopyLink}
+                  className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/15 rounded-full text-xs font-bold text-slate-200 transition active:scale-95"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-white" /> : <Share2 className="w-3.5 h-3.5" />}
+                  <span>{copied ? 'Copied Link' : `Room: ${roomId}`}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('snyx_active_room_id');
+                    onNavigate('/');
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 rounded-full text-xs font-bold text-red-400 hover:text-red-300 transition duration-300 active:scale-95 cursor-pointer"
+                  title="Exit Room and Return to Home"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-red-400" />
+                  <span className="hidden sm:inline">Exit Room</span>
+                </button>
+              </>
             )}
 
             {/* Inbox / Friend Requests Button */}

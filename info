@@ -1,0 +1,243 @@
+# sNyx - Authoritative Real-Time Synchronized Watchroom Platform
+
+**sNyx** is a full-stack, real-time web platform built for synchronous YouTube video watching, music listening, live chat, and social interaction among friends. Built using a modern TypeScript monorepo architecture, sNyx leverages WebSockets (Socket.IO), NestJS, React, Prisma ORM, and PostgreSQL to deliver sub-second playback synchronization across client devices.
+
+---
+
+## Table of Contents
+1. [Architecture & Technology Stack](#1-architecture--technology-stack)
+2. [Monorepo Directory Structure](#2-monorepo-directory-structure)
+3. [Database & Data Models (Prisma Schema)](#3-database--data-models-prisma-schema)
+4. [Real-Time Synchronization Protocol](#4-real-time-synchronization-protocol)
+5. [Key Feature Breakdown](#5-key-feature-breakdown)
+6. [WebSocket Events & Messaging Protocol](#6-websocket-events--messaging-protocol)
+7. [API Endpoints](#7-api-endpoints)
+8. [Setup & Running Instructions](#8-setup--running-instructions)
+
+---
+
+## 1. Architecture & Technology Stack
+
+The repository is structured as an **npm monorepo** with three primary packages:
+
+### Frontend (`apps/web`)
+- **Framework**: React 18 + TypeScript + Vite
+- **Styling**: Tailwind CSS (Dark monochromatic UI with glassmorphism effects)
+- **Icons**: `lucide-react`
+- **Real-Time Client**: `socket.io-client`
+- **Video Player**: YouTube IFrame API custom wrapper with imperative controls (`YouTubePlayer.tsx`)
+
+### Backend (`apps/api`)
+- **Framework**: NestJS (TypeScript)
+- **WebSockets**: NestJS WebSockets (`@nestjs/websockets`) powered by Socket.IO
+- **Database & ORM**: PostgreSQL with Prisma ORM (`@prisma/client`)
+- **HTTP Client**: `axios` for external YouTube Data API v3 integrations
+- **Authentication**: JWT & LocalStorage-assisted session management
+
+### Shared Package (`packages/shared`)
+- Shared TypeScript type definitions, payload interfaces, and global socket event dictionaries (`SocketEvents`) consumed by both the web frontend and NestJS backend.
+
+---
+
+## 2. Monorepo Directory Structure
+
+```
+snyx/
+├── apps/
+│   ├── api/                     # NestJS Backend API & WebSockets Gateway
+│   │   ├── prisma/
+│   │   │   └── schema.prisma    # PostgreSQL database schema & migrations
+│   │   ├── src/
+│   │   │   ├── modules/
+│   │   │   │   ├── auth/        # Profile & authentication management
+│   │   │   │   ├── health/      # Health check controllers
+│   │   │   │   ├── rooms/       # Watchrooms service & Socket.IO gateway
+│   │   │   │   ├── social/      # Friends, direct messages (DM), room invites
+│   │   │   │   └── youtube/     # YouTube API search & metadata resolver
+│   │   │   ├── app.module.ts
+│   │   │   ├── main.ts
+│   │   │   └── prisma.service.ts
+│   │   └── package.json
+│   └── web/                     # React Frontend Application
+│       ├── src/
+│       │   ├── components/
+│       │   │   ├── DmInboxModal.tsx    # Direct Messaging & Invites Modal
+│       │   │   ├── Navbar.tsx          # Global Monochromatic Navigation Bar
+│       │   │   └── YouTubePlayer.tsx   # YouTube IFrame API Wrapper
+│       │   ├── hooks/
+│       │   │   └── useRoom.ts          # Room WebSocket hook & state manager
+│       │   ├── pages/
+│       │   │   ├── LandingPage.tsx     # Hero section, Room creation/join & Auth
+│       │   │   ├── ProfilePage.tsx     # User profile page & friend controls
+│       │   │   └── RoomPage.tsx        # Main Watchroom page with Chat & Queue
+│       │   ├── App.tsx
+│       │   └── main.tsx
+│       └── package.json
+├── packages/
+│   └── shared/                  # Shared TypeScript models & socket events
+│       └── src/
+│           └── index.ts
+├── info                         # Comprehensive project documentation
+├── package.json                 # Monorepo root configuration
+├── tsconfig.json
+└── docker-compose.yml           # Local PostgreSQL container service
+```
+
+---
+
+## 3. Database & Data Models (Prisma Schema)
+
+The database schema (`apps/api/prisma/schema.prisma`) manages persistent storage for watchrooms, queue items, user profiles, friendships, direct messages, chat logs, and reactions.
+
+### Key Models:
+- **`Room`**: Stores room state including `currentVideoId`, `currentVideoTitle`, `currentVideoThumbnail`, `isPlaying` flag, current `position` in seconds, and `playbackStartedAt` timestamp.
+- **`QueueItem`**: Represents ordered video tracks added to a room queue with video metadata, duration, added-by info, and explicit `order`.
+- **`User`**: Account profiles containing `username`, `password`, `displayName`, `profilePicture`, `bio`, `profileBanner`, and `gender`.
+- **`FriendRequest` & `Friendship`**: Bi-directional friend relationships (`PENDING`, `ACCEPTED`, `DECLINED`).
+- **`DirectMessage`**: Private messages sent between users.
+- **`RoomInvite`**: Watchroom invitations sent directly to friends.
+- **`ChatMessage` & `ChatMessageReaction`**: Persistent room chat messages supporting replies, 2-minute edit tracking, un-sending, and emoji reactions.
+
+---
+
+## 4. Real-Time Synchronization Protocol
+
+To ensure all room participants stay synchronized down to the millisecond without lag or drift, sNyx implements an **Authoritative Timestamp & Offset Alignment Protocol**:
+
+1. **Server Timestamping**: When play/pause/seek or video loading occurs, the NestJS backend sets `playbackStartedAt` to the server's current timestamp and includes `serverTime` in `ROOM_STATE` broadcasts.
+2. **System Clock Skew Elimination**: Upon receiving room state, the client calculates `clockOffset = Date.now() - roomState.serverTime`. All local elapsed calculations evaluate `nowServer = Date.now() - clockOffset`, neutralizing any client computer clock discrepancies (e.g., fast/slow clocks).
+3. **Periodic Drift Correction**: Every 3 seconds, `RoomPage.tsx` checks local player time against expected server playback position:
+   - `expectedTime = roomState.position + (nowServer - roomState.playbackStartedAt) / 1000`
+   - If difference $\ge 1.0\text{s}$, `player.seek(expectedTime)` is called.
+   - If difference is between $0.25\text{s}$ and $1.0\text{s}$, playback rate is adjusted ($0.75\times$ or $1.25\times$) for smooth catch-up.
+4. **End-Zone & Buffering Protections**:
+   - Drift correction is skipped when player state is buffering (`playerState !== 1`) or within 3.5 seconds of track completion to prevent forcing YouTube iframe into premature `ENDED` states.
+   - Track completion (`sendPlaybackEnded()`) strictly requires `duration > 0` and `currentTime >= duration - 4.0`.
+
+---
+
+## 5. Key Feature Breakdown
+
+### Watchrooms & Playback Sync
+- Short room codes (e.g. `UMI-7X4K`) generated automatically.
+- Play, pause, seek, load video, and next track synchronized instantly for all participants.
+- Room presence tracking with active online badges.
+- **Room Participant Kick/Removal**: Clicking the online users badge opens a participants modal, allowing anyone in the room to remove any other participant in real time.
+- **Exit Room Button**: Quick exit button in both the header navbar and room controls bar.
+
+### Interactive Queue
+- Search YouTube directly from the room sidebar or paste YouTube video links.
+- Queue items display video title, thumbnail, and duration.
+- Drag & drop reordering of queue items.
+- Auto-advances to next queue item when current track ends.
+
+### Live Chat & Reactions
+- Real-time room chat with custom profile picture reflection.
+- Message replies (swipe-to-reply gesture supported on mobile/touch).
+- Message editing (within 2 minutes of sending) with `(edited)` tag.
+- Message un-sending / deletion.
+- Emoji reactions (`❤️`, `😂`, `😮`, `😢`, `👍`, `🔥`) with real-time reaction counts.
+- Infinite scroll pagination to load older message history.
+- Floating toast notifications when new messages arrive while viewing other tabs.
+
+### Social System & Profiles
+- User profiles with custom avatars, banners, bios, and gender selection.
+- Follow/Friend request management.
+- Watchroom invitations sent directly to active friends.
+- Direct messaging inbox modal accessible globally via navbar.
+
+---
+
+## 6. WebSocket Events & Messaging Protocol
+
+All real-time actions are managed through Socket.IO events defined in `packages/shared`:
+
+| Event Name | Direction | Description |
+| :--- | :--- | :--- |
+| `room:join` | Client $\rightarrow$ Server | Join a watchroom with participant credentials |
+| `room:leave` | Client $\rightarrow$ Server | Leave a watchroom |
+| `room:state` | Server $\rightarrow$ Client | Broadcast full room state (`RoomState`) to room |
+| `playback:play` | Client $\rightarrow$ Server | Resume playback at specified position |
+| `playback:pause` | Client $\rightarrow$ Server | Pause playback at specified position |
+| `playback:seek` | Client $\rightarrow$ Server | Seek to specific position |
+| `playback:load` | Client $\rightarrow$ Server | Load a specific YouTube video |
+| `playback:next` | Client $\rightarrow$ Server | Skip to next track in queue |
+| `playback:ended` | Client $\rightarrow$ Server | Signal that current video finished |
+| `queue:add` | Client $\rightarrow$ Server | Add video to queue |
+| `queue:remove` | Client $\rightarrow$ Server | Remove item from queue |
+| `queue:reorder` | Client $\rightarrow$ Server | Reorder queue items |
+| `room:user-remove` | Client $\rightarrow$ Server | Kick/remove a user from the room |
+| `room:user-kicked` | Server $\rightarrow$ Client | Notify target user that they were removed |
+| `room:chat-message` | Bi-directional | Broadcast new chat message |
+| `room:chat-reaction` | Bi-directional | Toggle emoji reaction on message |
+| `room:chat-delete` | Bi-directional | Un-send / delete a chat message |
+| `room:chat-edit` | Bi-directional | Edit a chat message within 2 minutes |
+
+---
+
+## 7. API Endpoints
+
+### Authentication & Profile (`/auth`)
+- `POST /auth/signup`: Create a new user account.
+- `POST /auth/login`: Authenticate and obtain user token.
+- `POST /auth/profile`: Update profile picture, bio, banner, display name, gender.
+
+### Watchrooms (`/rooms`)
+- `POST /rooms`: Create a new watchroom and return room code.
+- `GET /rooms/:id`: Fetch room details and queue.
+- `GET /rooms/:id/messages?before=:id&limit=50`: Paginated room chat history.
+
+### YouTube (`/youtube`)
+- `GET /youtube/search?q=:query`: Search YouTube videos (uses YouTube Data API v3 or fallback mock library).
+- `GET /youtube/video/:id`: Fetch YouTube video details for direct link pastes.
+
+### Social & Friends (`/social`)
+- `GET /social/friends`: Fetch user's friends list.
+- `POST /social/invites/:friendId`: Send watchroom invite to friend.
+- `GET /social/invites`: Fetch pending watchroom invites.
+
+---
+
+## 8. Setup & Running Instructions
+
+### Prerequisites
+- Node.js 18+ and npm
+- PostgreSQL database (or Docker for local container)
+
+### Installation
+1. Clone repository:
+   ```bash
+   git clone https://github.com/introversh/snyx.git
+   cd snyx
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Set environment variables (`.env` in root & `apps/api/.env`):
+   ```env
+   DATABASE_URL="postgresql://user:password@localhost:5432/snyx"
+   YOUTUBE_API_KEY="your_youtube_api_key_here"
+   VITE_API_URL="http://localhost:3000"
+   VITE_SOCKET_URL="http://localhost:3000"
+   ```
+4. Run Prisma database migrations:
+   ```bash
+   npm run prisma:migrate --workspace=@youtube-together/api
+   ```
+
+### Running Development Servers
+- Start backend API & Socket.IO server:
+  ```bash
+  npm run dev --workspace=@youtube-together/api
+  ```
+- Start frontend Vite dev server:
+  ```bash
+  npm run dev --workspace=@youtube-together/web
+  ```
+
+### Building for Production
+Build all packages (`shared`, `api`, `web`):
+```bash
+npm run build
+```

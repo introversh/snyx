@@ -34,6 +34,8 @@ model QueueItem {
   addedBy      String
   addedAt      DateTime @default(now())
   order        Int      @default(0)
+
+  @@index([roomId, order])
 }
 
 model User {
@@ -92,6 +94,9 @@ model DirectMessage {
   receiver   User     @relation("DMReceived", fields: [receiverId], references: [id], onDelete: Cascade)
   content    String
   createdAt  DateTime @default(now())
+
+  @@index([senderId, receiverId, createdAt])
+  @@index([receiverId, createdAt])
 }
 
 model RoomInvite {
@@ -102,6 +107,8 @@ model RoomInvite {
   receiverId  String
   receiver    User     @relation("InvitesReceived", fields: [receiverId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
+
+  @@index([receiverId, createdAt])
 }
 
 model ChatMessage {
@@ -116,8 +123,12 @@ model ChatMessage {
   replyToSenderName String?
   replyToContent    String?
   isEdited          Boolean               @default(false)
+  isDelivered       Boolean               @default(false)
+  isRead            Boolean               @default(false)
   createdAt         DateTime              @default(now())
   reactions         ChatMessageReaction[]
+
+  @@index([roomId, createdAt])
 }
 
 model ChatMessageReaction {

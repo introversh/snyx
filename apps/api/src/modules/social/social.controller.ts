@@ -1,6 +1,8 @@
 import { Controller, Get, Post, Delete, Body, Param, Query, Headers, UnauthorizedException } from '@nestjs/common';
 import { SocialService } from './social.service';
 import { AuthService } from '../auth/auth.service';
+import { SendDirectMessageDto } from './dto/direct-message.dto';
+import { CreateRoomInviteDto } from './dto/room-invite.dto';
 
 @Controller('social')
 export class SocialController {
@@ -100,20 +102,20 @@ export class SocialController {
   async sendDirectMessage(
     @Headers('authorization') auth: string,
     @Param('userId') receiverId: string,
-    @Body('content') content: string
+    @Body() dto: SendDirectMessageDto
   ) {
     const user = this.verifyToken(auth);
-    return this.socialService.sendDirectMessage(user.userId, receiverId, content);
+    return this.socialService.sendDirectMessage(user.userId, receiverId, dto.content);
   }
 
   @Post('invites/:userId')
   async createRoomInvite(
     @Headers('authorization') auth: string,
     @Param('userId') receiverId: string,
-    @Body('roomId') roomId: string
+    @Body() dto: CreateRoomInviteDto
   ) {
     const user = this.verifyToken(auth);
-    return this.socialService.createRoomInvite(user.userId, receiverId, roomId);
+    return this.socialService.createRoomInvite(user.userId, receiverId, dto.roomId);
   }
 
   @Get('invites')

@@ -35,6 +35,9 @@ export interface ChatMessage {
   replyToSenderName?: string;
   replyToContent?: string;
   isEdited?: boolean;
+  isDelivered?: boolean;
+  isRead?: boolean;
+  status?: 'sending' | 'sent' | 'delivered' | 'read';
   createdAt: number;
   reactions?: ChatMessageReaction[];
 }
@@ -86,6 +89,9 @@ export const SocketEvents = {
   CHAT_REACTION: 'room:chat-reaction',
   CHAT_DELETE: 'room:chat-delete',
   CHAT_EDIT: 'room:chat-edit',
+  CHAT_TYPING: 'room:chat-typing',
+  CHAT_READ: 'room:chat-read',
+  CHAT_DELIVERED: 'room:chat-delivered',
   ROOM_USER_REMOVE: 'room:user-remove',
   ROOM_USER_KICKED: 'room:user-kicked',
   ERROR: 'room:error'
@@ -95,6 +101,19 @@ export interface JoinRoomPayload {
   roomId: string;
   displayName: string;
   participantId: string;
+}
+
+export interface ChatTypingPayload {
+  roomId: string;
+  participantId: string;
+  displayName: string;
+  isTyping: boolean;
+}
+
+export interface ChatReadPayload {
+  roomId: string;
+  participantId: string;
+  messageIds?: string[];
 }
 
 export interface PlaybackPlayPayload {

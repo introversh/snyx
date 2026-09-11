@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { SocketEvents, RoomState, JoinRoomPayload } from '@youtube-together/shared';
+import { SocketEvents, RoomState, JoinRoomPayload, ChatMessage } from '@youtube-together/shared';
 import { getAvatarUrl } from '../pages/LandingPage';
+import { playNotificationChime } from '../utils/sound';
 
 const SOCKET_URL = (import.meta as any).env?.VITE_SOCKET_URL || 'http://localhost:3000';
 
@@ -63,16 +64,25 @@ export function useRoom(roomId: string | null, onKicked?: () => void) {
     }
   };
 
+  const [typingUser, setTypingUser] = useState<string | null>(null);
+  const typingTimeoutRef = useRef<any>(null);
+
   useEffect(() => {
     if (!roomId) {
       setRoomState(null);
       return;
     }
 
-    // Connect to Socket.IO server
+    const currentParticipant = getOrCreateParticipant();
+    const token = currentParticipant.token;
+
+    // Connect to Socket.IO server with auth token
     const socket = io(SOCKET_URL, {
       transports: ['websocket'],
       autoConnect: true,
+      auth: {
+        token: token || undefined,
+      },
     });
     socketRef.current = socket;
 
@@ -81,10 +91,11 @@ export function useRoom(roomId: string | null, onKicked?: () => void) {
       setError(null);
 
       // Join the room
-      const payload: JoinRoomPayload = {
+      const payload: JoinRoomPayload & { token?: string } = {
         roomId,
         displayName,
         participantId,
+        token: token || undefined,
       };
       socket.emit(SocketEvents.ROOM_JOIN, payload);
     });
@@ -110,13 +121,56 @@ export function useRoom(roomId: string | null, onKicked?: () => void) {
     });
 
     socket.on(SocketEvents.CHAT_MESSAGE, (msg: any) => {
+      // Play instant ting notification chime when message is from another user
+      if (msg.senderId !== participantId) {
+        playNotificationChime();
+      }
+
       setRoomState((prevState) => {
         if (!prevState) return null;
-        const exists = prevState.chatMessages.some((m) => m.id === msg.id);
-        if (exists) return prevState;
+        // Replace optimistic message if present (or filter duplicates)
+        const filtered = prevState.chatMessages.filter((m) => {
+          if (m.id === msg.id) return false;
+          if (m.status === 'sending' && m.senderId === msg.senderId && m.content === msg.content) {
+            return false;
+          }
+          return true;
+        });
         return {
           ...prevState,
-          chatMessages: [...prevState.chatMessages, msg],
+          chatMessages: [...filtered, msg],
+        };
+      });
+    });
+
+    socket.on(SocketEvents.CHAT_TYPING, (data: { participantId: string; displayName: string; isTyping: boolean }) => {
+      if (data.participantId !== participantId) {
+        if (data.isTyping) {
+          setTypingUser(data.displayName || 'Peer');
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = setTimeout(() => {
+            setTypingUser(null);
+          }, 3500);
+        } else {
+          setTypingUser(null);
+          if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        }
+      }
+    });
+
+    socket.on(SocketEvents.CHAT_READ, (data: { readerParticipantId: string; messageIds?: string[] }) => {
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        return {
+          ...prevState,
+          chatMessages: prevState.chatMessages.map((m) => {
+            if (m.senderId !== data.readerParticipantId) {
+              if (!data.messageIds || data.messageIds.includes(m.id)) {
+                return { ...m, isRead: true, isDelivered: true, status: 'read' };
+              }
+            }
+            return m;
+          }),
         };
       });
     });
@@ -256,12 +310,61 @@ export function useRoom(roomId: string | null, onKicked?: () => void) {
     }
   };
 
+  const sendTyping = (isTyping: boolean) => {
+    if (socketRef.current && roomId) {
+      const { displayName: latestName } = getOrCreateParticipant();
+      socketRef.current.emit(SocketEvents.CHAT_TYPING, {
+        roomId,
+        participantId,
+        displayName: latestName,
+        isTyping,
+      });
+    }
+  };
+
+  const markChatRead = (messageIds?: string[]) => {
+    if (socketRef.current && roomId) {
+      socketRef.current.emit(SocketEvents.CHAT_READ, {
+        roomId,
+        participantId,
+        messageIds,
+      });
+    }
+  };
+
   const sendChatMessage = (
     content: string,
     replyTo?: { id: string; senderName: string; content: string }
   ) => {
     if (socketRef.current && roomId && content.trim()) {
       const { displayName: latestName, profilePicture: latestAvatar } = getOrCreateParticipant();
+      const tempId = 'temp_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+      const optimisticMsg: ChatMessage = {
+        id: tempId,
+        roomId,
+        senderId: participantId,
+        senderName: latestName,
+        senderAvatar: latestAvatar || undefined,
+        content: content.trim(),
+        replyToId: replyTo?.id,
+        replyToSenderName: replyTo?.senderName,
+        replyToContent: replyTo?.content,
+        createdAt: Date.now(),
+        isDelivered: false,
+        isRead: false,
+        status: 'sending',
+        reactions: [],
+      };
+
+      // Optimistically append message with clock 'sending' status
+      setRoomState((prevState) => {
+        if (!prevState) return null;
+        return {
+          ...prevState,
+          chatMessages: [...prevState.chatMessages, optimisticMsg],
+        };
+      });
+
       socketRef.current.emit(SocketEvents.CHAT_MESSAGE, {
         roomId,
         senderId: participantId,
@@ -272,6 +375,9 @@ export function useRoom(roomId: string | null, onKicked?: () => void) {
         replyToSenderName: replyTo?.senderName,
         replyToContent: replyTo?.content,
       });
+
+      // Stop typing broadcast immediately on send
+      sendTyping(false);
     }
   };
 
@@ -366,5 +472,8 @@ export function useRoom(roomId: string | null, onKicked?: () => void) {
     deleteChatMessage,
     editChatMessage,
     removeUserFromRoom,
+    typingUser,
+    sendTyping,
+    markChatRead,
   };
 }

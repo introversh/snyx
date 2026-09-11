@@ -2,6 +2,7 @@ import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/co
 import { PrismaService } from '../../prisma.service';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class AuthService {
@@ -9,10 +10,19 @@ export class AuthService {
 
   constructor(private prisma: PrismaService) {}
 
+  private readonly reservedUsernames = new Set([
+    'room', 'auth', 'social', 'youtube', 'api', 'admin', 'administrator',
+    'login', 'signup', 'settings', 'profile', 'null', 'undefined', 'static', 'assets', 'system'
+  ]);
+
   async signup(username: string, password: string, gender?: string) {
     const cleanUsername = username.trim().toLowerCase();
     if (!cleanUsername || !password) {
       throw new UnauthorizedException('Username and password are required.');
+    }
+
+    if (this.reservedUsernames.has(cleanUsername)) {
+      throw new ConflictException('This username is reserved and cannot be registered.');
     }
 
     // Check if user already exists
@@ -82,20 +92,13 @@ export class AuthService {
     };
   }
 
-  async updateProfile(
-    userId: string,
-    displayName: string,
-    profilePicture: string,
-    bio?: string,
-    profileBanner?: string,
-    gender?: string,
-    isPrivate?: boolean
-  ) {
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const { displayName, profilePicture, bio, profileBanner, gender, isPrivate } = dto;
     const data: any = {};
-    if (displayName !== undefined) data.displayName = displayName || null;
-    if (profilePicture !== undefined) data.profilePicture = profilePicture || null;
-    if (bio !== undefined) data.bio = bio || "";
-    if (profileBanner !== undefined) data.profileBanner = profileBanner || "";
+    if (displayName !== undefined) data.displayName = displayName ? displayName.trim() : null;
+    if (profilePicture !== undefined) data.profilePicture = profilePicture ? profilePicture.trim() : null;
+    if (bio !== undefined) data.bio = bio ? bio.trim() : "";
+    if (profileBanner !== undefined) data.profileBanner = profileBanner ? profileBanner.trim() : "";
     if (gender !== undefined) data.gender = gender || "male";
     if (isPrivate !== undefined) data.isPrivate = Boolean(isPrivate);
 

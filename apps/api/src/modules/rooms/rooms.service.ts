@@ -136,24 +136,25 @@ export class RoomsService {
     addedBy: string,
     duration?: number
   ) {
-    // Get last order
-    const lastItem = await this.prisma.queueItem.findFirst({
-      where: { roomId },
-      orderBy: { order: 'desc' },
-    });
-    const nextOrder = lastItem ? lastItem.order + 1 : 0;
+    return this.prisma.$transaction(async (tx) => {
+      const lastItem = await tx.queueItem.findFirst({
+        where: { roomId },
+        orderBy: { order: 'desc' },
+      });
+      const nextOrder = lastItem ? lastItem.order + 1 : 0;
 
-    return this.prisma.queueItem.create({
-      data: {
-        roomId,
-        videoId,
-        title,
-        thumbnail,
-        channelTitle,
-        addedBy,
-        duration,
-        order: nextOrder,
-      },
+      return tx.queueItem.create({
+        data: {
+          roomId,
+          videoId,
+          title,
+          thumbnail,
+          channelTitle,
+          addedBy,
+          duration,
+          order: nextOrder,
+        },
+      });
     });
   }
 
@@ -192,7 +193,8 @@ export class RoomsService {
     senderAvatar?: string | null,
     replyToId?: string | null,
     replyToSenderName?: string | null,
-    replyToContent?: string | null
+    replyToContent?: string | null,
+    isDelivered: boolean = false
   ) {
     return this.prisma.chatMessage.create({
       data: {
@@ -204,11 +206,34 @@ export class RoomsService {
         replyToId: replyToId || null,
         replyToSenderName: replyToSenderName || null,
         replyToContent: replyToContent || null,
+        isDelivered,
+        isRead: false,
       },
       include: {
         reactions: true,
       },
     });
+  }
+
+  async markMessagesAsRead(roomId: string, readerParticipantId: string, messageIds?: string[]) {
+    const whereClause: any = {
+      roomId,
+      senderId: { not: readerParticipantId },
+      isRead: false,
+    };
+    if (messageIds && messageIds.length > 0) {
+      whereClause.id = { in: messageIds };
+    }
+
+    await this.prisma.chatMessage.updateMany({
+      where: whereClause,
+      data: {
+        isRead: true,
+        isDelivered: true,
+      },
+    });
+
+    return { roomId, readerParticipantId };
   }
 
   async toggleReaction(

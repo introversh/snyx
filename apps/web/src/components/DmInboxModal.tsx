@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Send, MessageSquare, MessageCircle, RefreshCw, UserCheck, UserX, Users } from 'lucide-react';
+import { X, Send, MessageSquare, MessageCircle, RefreshCw, UserCheck, UserX, Users, Check, CheckCheck } from 'lucide-react';
 import { getAvatarUrl } from '../pages/LandingPage';
+import { playNotificationChime } from '../utils/sound';
 
 interface DmInboxModalProps {
   isOpen: boolean;
@@ -37,6 +38,7 @@ export default function DmInboxModal({
   const [searchLoading, setSearchLoading] = useState(false);
 
   const dmLogRef = useRef<HTMLDivElement | null>(null);
+  const prevDmCountRef = useRef<number>(0);
 
   useEffect(() => {
     if (isOpen && currentUser && currentUser.token) {
@@ -169,6 +171,15 @@ export default function DmInboxModal({
       });
       if (res.ok) {
         const data = await res.json();
+        if (Array.isArray(data)) {
+          if (data.length > prevDmCountRef.current && prevDmCountRef.current > 0) {
+            const lastMsg = data[data.length - 1];
+            if (lastMsg && lastMsg.senderId !== currentUser.userId) {
+              playNotificationChime();
+            }
+          }
+          prevDmCountRef.current = data.length;
+        }
         setMessages(data);
       }
     } catch (e) {
@@ -462,13 +473,24 @@ export default function DmInboxModal({
                           }`}
                         >
                           <p className="break-words">{msg.content}</p>
-                          <span
-                            className={`block text-[8px] text-right mt-1 font-mono leading-none ${
+                          <div
+                            className={`flex items-center justify-end gap-1 mt-1 font-mono leading-none ${
                               isOwn ? 'text-neutral-700' : 'text-neutral-500'
                             }`}
                           >
-                            {formatMsgTime(msg.createdAt)}
-                          </span>
+                            <span className="text-[8px]">{formatMsgTime(msg.createdAt)}</span>
+                            {isOwn && (
+                              <span className="inline-flex items-center ml-0.5" title={msg.isRead ? 'Read' : msg.isDelivered ? 'Delivered' : 'Sent'}>
+                                {msg.isRead ? (
+                                  <CheckCheck className="w-3.5 h-3.5 text-blue-600 stroke-[2.5]" />
+                                ) : msg.isDelivered ? (
+                                  <CheckCheck className="w-3.5 h-3.5 text-neutral-600 stroke-[2]" />
+                                ) : (
+                                  <Check className="w-3.5 h-3.5 text-neutral-600 stroke-[2]" />
+                                )}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

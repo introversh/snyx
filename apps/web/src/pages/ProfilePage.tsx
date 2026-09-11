@@ -40,16 +40,22 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
 
   // Current logged in user info
   const storedUserStr = localStorage.getItem('snyx_user');
-  if (!storedUserStr) {
-    onNavigate('/');
-    return null;
-  }
-  const currentUser = JSON.parse(storedUserStr);
-  const isOwnProfile = currentUser.username.toLowerCase() === username.toLowerCase();
+  let currentUser: any = null;
+  try {
+    if (storedUserStr) {
+      currentUser = JSON.parse(storedUserStr);
+    }
+  } catch (e) {}
+
+  const isOwnProfile = currentUser?.username?.toLowerCase() === username.toLowerCase();
 
   useEffect(() => {
+    if (!currentUser || !currentUser.token) {
+      onNavigate('/');
+      return;
+    }
     fetchProfile();
-  }, [username]);
+  }, [username, currentUser?.token]);
 
   const fetchProfile = async () => {
     setLoading(true);
@@ -223,6 +229,18 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
     }
   };
 
+  const startEditing = () => {
+    if (user) {
+      setEditName(user.displayName || '');
+      setEditBio(user.bio || '');
+      setEditGender(user.gender || 'male');
+      setEditAvatar(user.profilePicture || '');
+      setEditBanner(user.profileBanner || '');
+      setEditIsPrivate(user.isPrivate || false);
+    }
+    setIsEditing(true);
+  };
+
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingProfile(true);
@@ -279,6 +297,10 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
 
   const defaultBanner = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&fit=crop&q=80';
 
+  if (!currentUser) {
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-black text-slate-100 flex flex-col justify-between font-sans relative">
       
@@ -289,7 +311,7 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
       />
 
       {/* Main Content */}
-      <main className="flex-grow max-w-4xl w-full mx-auto p-6 z-10 space-y-8">
+      <main className="flex-grow max-w-4xl w-full mx-auto p-4 sm:p-6 z-10 space-y-8">
         
         {loading ? (
           <div className="text-center p-24 space-y-3 font-mono">
@@ -324,14 +346,14 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                 </div>
 
                 {/* Banner & Avatar interactive upload pickers */}
-                <div className="relative rounded-2xl overflow-hidden bg-black border border-white/10 h-36">
+                <div className="relative rounded-2xl overflow-hidden bg-black border border-white/10 h-40 sm:h-48 group">
                   <img
                     src={editBanner || defaultBanner}
                     alt="Banner"
                     className="w-full h-full object-cover opacity-80"
                   />
                   <label className="absolute inset-0 bg-black/60 flex items-center justify-center cursor-pointer opacity-90 hover:opacity-100 transition">
-                    <div className="flex items-center gap-2 bg-black/80 px-4 py-2 rounded-full border border-white/20 text-xs font-bold text-white">
+                    <div className="flex items-center gap-2 bg-black/80 px-4 py-2 rounded-full border border-white/20 text-xs font-bold text-white shadow-lg">
                       <Camera className="w-4 h-4" /> Change Cover Banner
                     </div>
                     <input
@@ -344,7 +366,7 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                 </div>
 
                 <div className="flex items-center gap-4">
-                  <div className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-white/20 bg-black shrink-0">
+                  <div className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-white/20 bg-black shrink-0 group">
                     <img
                       src={getAvatarUrl(editAvatar, editGender)}
                       alt="Avatar"
@@ -396,8 +418,8 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                     onChange={(e) => setEditGender(e.target.value)}
                     className="w-full bg-white/5 border border-white/10 text-white px-4 py-3 rounded-2xl outline-none text-xs"
                   >
-                    <option value="male" className="bg-[#0b0c1e] text-white">Male (Blue Silhouette Default)</option>
-                    <option value="female" className="bg-[#0b0c1e] text-white">Female (Pink Silhouette Default)</option>
+                    <option value="male" className="bg-[#0b0c1e] text-white">Male</option>
+                    <option value="female" className="bg-[#0b0c1e] text-white">Female</option>
                     <option value="other" className="bg-[#0b0c1e] text-white">Other</option>
                   </select>
                 </div>
@@ -445,121 +467,156 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                 </div>
               </form>
             ) : (
-              /* Instagram Style Display Header */
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 items-center">
+              /* Profile Display Header */
+              <div className="space-y-6">
                 
-                {/* Left Side: Large Avatar */}
-                <div className="md:col-span-4 flex justify-center">
-                  <div className="w-28 h-28 md:w-36 md:h-36 rounded-full border border-white/20 overflow-hidden shadow-2xl bg-neutral-900">
-                    <img
-                      src={getAvatarUrl(user.profilePicture, user.gender)}
-                      alt="Avatar"
-                      className="w-full h-full object-cover"
-                    />
+                {/* Functional Profile Banner */}
+                <div className="relative w-full h-44 sm:h-56 md:h-64 rounded-3xl overflow-hidden border border-white/10 bg-neutral-900 shadow-xl group">
+                  <img
+                    src={user.profileBanner && user.profileBanner.trim() ? user.profileBanner : defaultBanner}
+                    alt="Profile Cover Banner"
+                    className="w-full h-full object-cover"
+                  />
+                  {isOwnProfile && (
+                    <button
+                      onClick={startEditing}
+                      className="absolute top-4 right-4 bg-black/60 hover:bg-black/85 backdrop-blur-md border border-white/20 text-white text-xs font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition active:scale-95 shadow-lg"
+                    >
+                      <Camera className="w-3.5 h-3.5" /> Edit Cover
+                    </button>
+                  )}
+                </div>
+
+                {/* Profile Identity Details (Overlapping Avatar, Prominent Name, Smaller Username) */}
+                <div className="relative px-4 sm:px-6 -mt-16 sm:-mt-20 md:-mt-24 flex flex-col sm:flex-row sm:items-end justify-between gap-5">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-end gap-4 text-center sm:text-left">
+                    
+                    {/* Large Avatar */}
+                    <div className="relative w-28 h-28 sm:w-32 sm:h-32 md:w-36 md:h-36 rounded-full border-4 border-black bg-neutral-900 overflow-hidden shadow-2xl shrink-0 group">
+                      <img
+                        src={getAvatarUrl(user.profilePicture, user.gender)}
+                        alt="Avatar"
+                        className="w-full h-full object-cover"
+                      />
+                      {isOwnProfile && (
+                        <button
+                          onClick={startEditing}
+                          className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                          title="Edit Avatar"
+                        >
+                          <Camera className="w-5 h-5 text-white" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Name (Much Bigger) & Username (Smaller) */}
+                    <div className="space-y-1 pb-1">
+                      <div className="flex items-center justify-center sm:justify-start gap-2.5 flex-wrap">
+                        <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-white tracking-tight">
+                          {user.displayName || user.username}
+                        </h1>
+                        {!isOwnProfile && user.friendStatus !== 'FRIENDS' && user.isPrivate && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-white/10 border border-white/15 rounded-full text-[9px] font-extrabold uppercase tracking-wider text-neutral-300" title="Private Account">
+                            <Lock className="w-3 h-3 text-white" /> Private
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs sm:text-sm font-mono text-neutral-400 font-medium">
+                        @{user.username}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Profile Action Buttons */}
+                  <div className="flex items-center justify-center sm:justify-end gap-2.5 pb-1 flex-wrap">
+                    {isOwnProfile ? (
+                      <button
+                        onClick={startEditing}
+                        className="px-5 py-2 bg-white/10 hover:bg-white/15 border border-white/10 text-white rounded-xl text-xs font-bold transition duration-300"
+                      >
+                        Edit Profile
+                      </button>
+                    ) : (
+                      <>
+                        {user.friendStatus === 'FRIENDS' ? (
+                          <button
+                            onClick={handleRemoveFriend}
+                            disabled={actionLoading}
+                            className="px-5 py-2 bg-white/10 hover:bg-white/15 border border-white/10 text-white rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-1.5 transition duration-300"
+                            title="Click to Unfriend"
+                          >
+                            <UserCheck className="w-4 h-4" />
+                            <span>Friend</span>
+                          </button>
+                        ) : user.friendStatus === 'SENT_PENDING' ? (
+                          <button
+                            onClick={handleCancelRequest}
+                            disabled={actionLoading}
+                            className="px-5 py-2 bg-white/10 hover:bg-white/15 border border-white/10 text-white/70 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-1.5 transition duration-300"
+                            title="Click to Cancel Request"
+                          >
+                            <Clock className="w-4 h-4 text-white/70" />
+                            <span>Requested</span>
+                          </button>
+                        ) : user.friendStatus === 'RECEIVED_PENDING' ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={handleAcceptRequest}
+                              disabled={actionLoading}
+                              className="px-4 py-2 bg-white hover:bg-neutral-200 text-black rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 transition shadow-md"
+                            >
+                              <UserCheck className="w-4 h-4" />
+                              <span>Accept</span>
+                            </button>
+                            <button
+                              onClick={handleDeclineRequest}
+                              disabled={actionLoading}
+                              className="px-3.5 py-2 bg-white/10 hover:bg-white/15 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition"
+                            >
+                              <UserX className="w-4 h-4" />
+                              <span>Decline</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={handleSendRequest}
+                            disabled={actionLoading}
+                            className="px-5 py-2 bg-white hover:bg-neutral-250 text-black rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-1.5 transition duration-300 shadow-md"
+                          >
+                            {actionLoading ? (
+                              <RefreshCw className="w-4 h-4 animate-spin text-black" />
+                            ) : (
+                              <>
+                                <UserPlus className="w-4 h-4" />
+                                <span>Add Friend</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            const activeRoom = localStorage.getItem('snyx_active_room_id');
+                            localStorage.setItem('snyx_open_dm_userId', user.id);
+                            if (activeRoom) {
+                              onNavigate(`/room/${activeRoom}`);
+                            } else {
+                              onNavigate('/');
+                            }
+                          }}
+                          className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl transition"
+                          title="Message User"
+                        >
+                          <MessageCircle className="w-4 h-4 text-white" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
-                {/* Right Side: Identity information, privacy badge, buttons */}
-                <div className="md:col-span-8 space-y-5 text-center md:text-left">
-                  
-                  <div className="flex flex-col sm:flex-row items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg md:text-xl font-normal text-white">@{user.username}</h2>
-                      {user.isPrivate && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-white/10 border border-white/15 rounded-full text-[9px] font-extrabold uppercase tracking-wider text-neutral-300" title="Private Account">
-                          <Lock className="w-3 h-3 text-white" /> Private
-                        </span>
-                      )}
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                      {isOwnProfile ? (
-                        <button
-                          onClick={() => setIsEditing(true)}
-                          className="px-5 py-1.5 bg-white/10 hover:bg-white/15 border border-white/10 text-white rounded-xl text-xs font-bold transition duration-300"
-                        >
-                          Edit Profile
-                        </button>
-                      ) : (
-                        <>
-                          {user.friendStatus === 'FRIENDS' ? (
-                            <button
-                              onClick={handleRemoveFriend}
-                              disabled={actionLoading}
-                              className="px-5 py-1.5 bg-white/10 hover:bg-white/15 border border-white/10 text-white rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-1.5 transition duration-300"
-                              title="Click to Unfriend"
-                            >
-                              <UserCheck className="w-4 h-4" />
-                              <span>Friend</span>
-                            </button>
-                          ) : user.friendStatus === 'SENT_PENDING' ? (
-                            <button
-                              onClick={handleCancelRequest}
-                              disabled={actionLoading}
-                              className="px-5 py-1.5 bg-white/10 hover:bg-white/15 border border-white/10 text-white/70 rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-1.5 transition duration-300"
-                              title="Click to Cancel Request"
-                            >
-                              <Clock className="w-4 h-4 text-white/70" />
-                              <span>Requested</span>
-                            </button>
-                          ) : user.friendStatus === 'RECEIVED_PENDING' ? (
-                            <div className="flex gap-2">
-                              <button
-                                onClick={handleAcceptRequest}
-                                disabled={actionLoading}
-                                className="px-4 py-1.5 bg-white hover:bg-neutral-200 text-black rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1 transition shadow-md"
-                              >
-                                <UserCheck className="w-4 h-4" />
-                                <span>Accept</span>
-                              </button>
-                              <button
-                                onClick={handleDeclineRequest}
-                                disabled={actionLoading}
-                                className="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1 transition"
-                              >
-                                <UserX className="w-4 h-4" />
-                                <span>Decline</span>
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={handleSendRequest}
-                              disabled={actionLoading}
-                              className="px-5 py-1.5 bg-white hover:bg-neutral-250 text-black rounded-xl text-xs font-extrabold uppercase tracking-wider flex items-center justify-center gap-1.5 transition duration-300 shadow-md"
-                            >
-                              {actionLoading ? (
-                                <RefreshCw className="w-4 h-4 animate-spin text-black" />
-                              ) : (
-                                <>
-                                  <UserPlus className="w-4 h-4" />
-                                  <span>Add Friend</span>
-                                </>
-                              )}
-                            </button>
-                          )}
-
-                          <button
-                            onClick={() => {
-                              const activeRoom = localStorage.getItem('snyx_active_room_id');
-                              localStorage.setItem('snyx_open_dm_userId', user.id);
-                              if (activeRoom) {
-                                onNavigate(`/room/${activeRoom}`);
-                              } else {
-                                onNavigate('/');
-                              }
-                            }}
-                            className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl transition"
-                            title="Message User"
-                          >
-                            <MessageCircle className="w-4 h-4 text-white" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Friends Count (With Private Access Restrictions) */}
-                  <div className="flex justify-center md:justify-start gap-8 border-t border-b border-white/5 py-2 md:border-none md:py-0">
+                {/* Friends Count & Bio Section */}
+                <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-6 space-y-4">
+                  <div className="flex items-center gap-6">
                     <span
                       onClick={fetchFriendsModal}
                       className="text-sm text-neutral-400 cursor-pointer hover:underline flex items-center gap-1.5"
@@ -569,15 +626,14 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                     </span>
                   </div>
 
-                  {/* Display Name & Bio */}
-                  <div className="space-y-1">
-                    <h3 className="font-extrabold text-sm text-slate-100">{user.displayName || user.username}</h3>
-                    <p className="text-xs text-neutral-350 leading-relaxed font-medium mt-2 max-w-md whitespace-pre-line italic">
-                      {user.bio || "Do I need to introduce myself?."}
+                  <div className="border-t border-white/5 pt-4">
+                    <h4 className="text-[10px] uppercase font-mono tracking-widest text-neutral-500 font-bold mb-1.5">ABOUT</h4>
+                    <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed font-normal whitespace-pre-line">
+                      {user.bio || "No biography provided yet."}
                     </p>
                   </div>
-
                 </div>
+
               </div>
             )}
 
@@ -663,7 +719,7 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
 
       {/* Footer */}
       <footer className="text-center text-[10px] text-neutral-600 font-mono tracking-widest py-4 max-w-4xl mx-auto w-full border-t border-white/5 mt-8">
-        <p>&copy; {new Date().getFullYear()} SNYX. MONOCHROME PLATFORM CONTRACT v1.5.0</p>
+        <p>&copy; {new Date().getFullYear()} SNYX: Built With Intent !</p>
       </footer>
     </div>
   );
