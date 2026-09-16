@@ -55,7 +55,7 @@ export class SocialService {
     });
   }
 
-  // Search users in sNyx database
+  // Search users in Snyx database
   async searchUsers(currentUserId: string, query: string) {
     const cleanQuery = query.trim().toLowerCase();
     const users = await this.prisma.user.findMany({
@@ -103,6 +103,9 @@ export class SocialService {
         bio: true,
         gender: true,
         isPrivate: true,
+        showActiveStatus: true,
+        isOnline: true,
+        homeRoomId: true,
       },
     });
 
@@ -113,8 +116,15 @@ export class SocialService {
     const friendsCount = await this.getFriendsCount(userId);
     const friendStatus = await this.getFriendStatus(currentUserId, userId);
 
+    const currentUser = await this.prisma.user.findUnique({ where: { id: currentUserId }, select: { showActiveStatus: true } });
+    if (!currentUser?.showActiveStatus || !user.showActiveStatus) {
+      user.isOnline = null as any; // Cast as any because TS might complain if isOnline is defined as strictly boolean from prisma, wait, let's just do it
+      // Actually we can just map it when returning
+    }
+
     return {
       ...user,
+      isOnline: (!currentUser?.showActiveStatus || !user.showActiveStatus) ? null : user.isOnline,
       friendsCount,
       friendStatus,
     };
@@ -136,6 +146,9 @@ export class SocialService {
         bio: true,
         gender: true,
         isPrivate: true,
+        showActiveStatus: true,
+        isOnline: true,
+        homeRoomId: true,
       },
     });
 
@@ -146,8 +159,11 @@ export class SocialService {
     const friendsCount = await this.getFriendsCount(user.id);
     const friendStatus = await this.getFriendStatus(currentUserId, user.id);
 
+    const currentUser = await this.prisma.user.findUnique({ where: { id: currentUserId }, select: { showActiveStatus: true } });
+
     return {
       ...user,
+      isOnline: (!currentUser?.showActiveStatus || !user.showActiveStatus) ? null : user.isOnline,
       friendsCount,
       friendStatus,
     };

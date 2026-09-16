@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { UserCheck, UserPlus, MessageCircle, RefreshCw, Camera, X, Users, Clock, UserX, Lock } from 'lucide-react';
+import { UserCheck, UserPlus, MessageCircle, RefreshCw, Camera, X, Users, Clock, UserX, Lock, DoorOpen } from 'lucide-react';
 import { getAvatarUrl } from './LandingPage';
 import Navbar from '../components/Navbar';
 import DmInboxModal from '../components/DmInboxModal';
+import PlaylistSection from '../components/PlaylistSection';
 
 interface ProfilePageProps {
   username: string;
@@ -27,6 +28,7 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
   const [editAvatar, setEditAvatar] = useState('');
   const [editBanner, setEditBanner] = useState('');
   const [editIsPrivate, setEditIsPrivate] = useState(false);
+  const [editShowActiveStatus, setEditShowActiveStatus] = useState(true);
   const [savingProfile, setSavingProfile] = useState(false);
 
   // Friends Modal States
@@ -76,6 +78,7 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
       setEditAvatar(data.profilePicture || '');
       setEditBanner(data.profileBanner || '');
       setEditIsPrivate(data.isPrivate || false);
+      setEditShowActiveStatus(data.showActiveStatus !== false);
     } catch (e: any) {
       setError(e.message || 'An error occurred.');
     } finally {
@@ -237,6 +240,7 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
       setEditAvatar(user.profilePicture || '');
       setEditBanner(user.profileBanner || '');
       setEditIsPrivate(user.isPrivate || false);
+      setEditShowActiveStatus(user.showActiveStatus !== false);
     }
     setIsEditing(true);
   };
@@ -263,6 +267,25 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
 
       if (!res.ok) throw new Error('Failed to save profile');
       const data = await res.json();
+      
+      // Update active status in a separate endpoint call
+      if (editShowActiveStatus !== user.showActiveStatus) {
+        try {
+          await fetch(`${API_BASE_URL}/auth/active-status`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${currentUser.token}`
+            },
+            body: JSON.stringify({ showActiveStatus: editShowActiveStatus })
+          });
+          data.showActiveStatus = editShowActiveStatus;
+        } catch (e) {
+          console.error('Failed to update active status', e);
+        }
+      } else {
+        data.showActiveStatus = user.showActiveStatus;
+      }
 
       const updatedUser = {
         ...currentUser,
@@ -271,7 +294,8 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
         bio: data.bio,
         profileBanner: data.profileBanner,
         gender: data.gender,
-        isPrivate: data.isPrivate
+        isPrivate: data.isPrivate,
+        showActiveStatus: data.showActiveStatus
       };
       localStorage.setItem('snyx_user', JSON.stringify(updatedUser));
 
@@ -282,7 +306,8 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
         bio: data.bio,
         profileBanner: data.profileBanner,
         gender: data.gender,
-        isPrivate: data.isPrivate
+        isPrivate: data.isPrivate,
+        showActiveStatus: data.showActiveStatus
       });
 
       setIsEditing(false);
@@ -442,6 +467,26 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                   </div>
                 </div>
 
+                {/* Show Active Status Toggle */}
+                <div
+                  onClick={() => setEditShowActiveStatus(!editShowActiveStatus)}
+                  className="flex items-center justify-between p-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl cursor-pointer transition select-none"
+                >
+                  <div className="space-y-0.5">
+                    <span className="block text-xs font-extrabold text-white flex items-center gap-1.5">
+                      Show Active Status
+                    </span>
+                    {!editShowActiveStatus && (
+                      <span className="block text-[10px] text-neutral-400">
+                        When hidden, you also can't see others' active status
+                      </span>
+                    )}
+                  </div>
+                  <div className={`w-11 h-6 flex items-center rounded-full p-1 transition duration-300 ${editShowActiveStatus ? 'bg-green-500 justify-end' : 'bg-white/10 justify-start'}`}>
+                    <div className={`w-4 h-4 rounded-full shadow-md ${editShowActiveStatus ? 'bg-white' : 'bg-neutral-500'}`} />
+                  </div>
+                </div>
+
                 <div className="flex gap-3 pt-2">
                   <button
                     type="submit"
@@ -498,10 +543,13 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                         alt="Avatar"
                         className="w-full h-full object-cover"
                       />
+                      {user.isOnline && (
+                        <div className="absolute bottom-1.5 right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-black z-10"></div>
+                      )}
                       {isOwnProfile && (
                         <button
                           onClick={startEditing}
-                          className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                          className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer z-20"
                           title="Edit Avatar"
                         >
                           <Camera className="w-5 h-5 text-white" />
@@ -538,6 +586,13 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                       </button>
                     ) : (
                       <>
+                        <button
+                          onClick={() => onNavigate(`/knock/${user.username}`)}
+                          className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/10 text-white rounded-xl text-xs font-bold transition duration-300 flex items-center gap-1.5"
+                          title="Visit Home"
+                        >
+                          <DoorOpen className="w-4 h-4" /> Visit Home
+                        </button>
                         {user.friendStatus === 'FRIENDS' ? (
                           <button
                             onClick={handleRemoveFriend}
@@ -633,6 +688,12 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                     </p>
                   </div>
                 </div>
+
+                <PlaylistSection 
+                  userId={user.id} 
+                  isOwnProfile={isOwnProfile} 
+                  apiBaseUrl={API_BASE_URL} 
+                />
 
               </div>
             )}

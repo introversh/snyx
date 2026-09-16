@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, AlertCircle, User, Lock, CheckCircle, X, RefreshCw } from 'lucide-react';
+import { Sparkles, AlertCircle, User, Lock, CheckCircle, X, RefreshCw, Camera } from 'lucide-react';
 import DmInboxModal from '../components/DmInboxModal';
 import Navbar from '../components/Navbar';
+import MissedKnocksModal from '../components/MissedKnocksModal';
+import { MissedKnock } from '@youtube-together/shared';
 
 interface LandingPageProps {
   onNavigate: (path: string) => void;
@@ -33,6 +35,8 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
+  const [displayNameInput, setDisplayNameInput] = useState('');
+  const [profilePicInput, setProfilePicInput] = useState('');
   const [genderInput, setGenderInput] = useState('male'); // male, female, other
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
@@ -44,6 +48,10 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
 
   // DM Inbox Modal State
   const [isDmModalOpen, setIsDmModalOpen] = useState(false);
+
+  // Missed Knocks Modal State
+  const [missedKnocks, setMissedKnocks] = useState<MissedKnock[]>([]);
+  const [showMissedKnocks, setShowMissedKnocks] = useState(false);
 
   useEffect(() => {
     // Check if user is logged in
@@ -137,6 +145,22 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
     onNavigate(`/room/${cleanCode}`);
   };
 
+  // Image Upload Handler
+  const handleProfilePicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 3 * 1024 * 1024) {
+        setAuthError('Image size should be less than 3MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePicInput(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Auth Submit Handler
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -164,7 +188,13 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
     setAuthLoading(true);
     const endpoint = authMode === 'signup' ? 'signup' : 'login';
     const authPayload = authMode === 'signup'
-      ? { username, password, gender: genderInput }
+      ? { 
+          username, 
+          password, 
+          gender: genderInput,
+          displayName: displayNameInput.trim() || undefined,
+          profilePicture: profilePicInput || undefined
+        }
       : { username, password };
 
     try {
@@ -186,8 +216,15 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
       setUser(data);
       setAuthSuccess(authMode === 'signup' ? 'Account created successfully!' : 'Logged in successfully!');
       
+      if (data.missedKnocks && data.missedKnocks.length > 0) {
+        setMissedKnocks(data.missedKnocks);
+        setShowMissedKnocks(true);
+      }
+
       setUsernameInput('');
       setPasswordInput('');
+      setDisplayNameInput('');
+      setProfilePicInput('');
 
       // Dispatch auth state change
       window.dispatchEvent(new Event('snyx_auth_change'));
@@ -266,6 +303,27 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                       </button>
                     </div>
 
+                    {authMode === 'signup' && (
+                      <div className="flex justify-center mb-4">
+                        <div className="relative w-20 h-20 rounded-full border-2 border-white/20 overflow-hidden bg-white/5 flex items-center justify-center shrink-0 group">
+                          {profilePicInput ? (
+                            <img src={profilePicInput} className="w-full h-full object-cover" />
+                          ) : (
+                            <Camera className="w-6 h-6 text-neutral-500" />
+                          )}
+                          <label className="absolute inset-0 bg-black/50 flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition">
+                            <span className="text-[9px] font-bold text-white uppercase">Upload</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleProfilePicUpload}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="relative">
                       <input
                         type="text"
@@ -276,6 +334,19 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
                       />
                       <User className="absolute left-3.5 top-3.5 w-4 h-4 text-neutral-500" />
                     </div>
+                    
+                    {authMode === 'signup' && (
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="DISPLAY NAME (Optional)"
+                          value={displayNameInput}
+                          onChange={(e) => setDisplayNameInput(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 focus:border-white/20 text-white pl-10 pr-4 py-3 rounded-2xl outline-none text-xs focus:bg-white/10 transition"
+                        />
+                        <User className="absolute left-3.5 top-3.5 w-4 h-4 text-neutral-500" />
+                      </div>
+                    )}
 
                     <div className="relative">
                       <input
@@ -430,6 +501,14 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
         currentUser={user}
         apiBaseUrl={API_BASE_URL}
       />
+
+      {/* Missed Knocks Modal */}
+      {showMissedKnocks && (
+        <MissedKnocksModal
+          knocks={missedKnocks}
+          onDismiss={() => setShowMissedKnocks(false)}
+        />
+      )}
 
       {/* Footer */}
       <footer className="text-center text-[10px] text-neutral-500 font-mono tracking-widest py-4 max-w-4xl mx-auto w-full border-t border-white/10">

@@ -1,6 +1,6 @@
-# sNyx - Authoritative Real-Time Synchronized Watchroom Platform
+# Snyx - Authoritative Real-Time Synchronized Watchroom Platform
 
-**sNyx** is a full-stack, real-time web platform built for synchronous YouTube video watching, music listening, live chat, and social interaction among friends. Built using a modern TypeScript monorepo architecture, sNyx leverages WebSockets (Socket.IO), NestJS, React, Prisma ORM, and PostgreSQL to deliver sub-second playback synchronization across client devices.
+**Snyx** is a full-stack, real-time web platform built for synchronous YouTube video watching, music listening, live chat, and social interaction among friends. Built using a modern TypeScript monorepo architecture, Snyx leverages WebSockets (Socket.IO), NestJS, React, Prisma ORM, and PostgreSQL to deliver sub-second playback synchronization across client devices.
 
 ---
 
@@ -102,7 +102,7 @@ The database schema (`apps/api/prisma/schema.prisma`) manages persistent storage
 
 ## 4. Real-Time Synchronization Protocol
 
-To ensure all room participants stay synchronized down to the millisecond without lag or drift, sNyx implements an **Authoritative Timestamp & Offset Alignment Protocol**:
+To ensure all room participants stay synchronized down to the millisecond without lag or drift, Snyx implements an **Authoritative Timestamp & Offset Alignment Protocol**:
 
 1. **Server Timestamping**: When play/pause/seek or video loading occurs, the NestJS backend sets `playbackStartedAt` to the server's current timestamp and includes `serverTime` in `ROOM_STATE` broadcasts.
 2. **System Clock Skew Elimination**: Upon receiving room state, the client calculates `clockOffset = Date.now() - roomState.serverTime`. All local elapsed calculations evaluate `nowServer = Date.now() - clockOffset`, neutralizing any client computer clock discrepancies (e.g., fast/slow clocks).

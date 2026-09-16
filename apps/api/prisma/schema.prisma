@@ -10,6 +10,7 @@ generator client {
 
 model Room {
   id                    String        @id
+  name                  String?
   currentVideoId        String?
   currentVideoTitle     String?
   currentVideoThumbnail String?
@@ -18,8 +19,21 @@ model Room {
   playbackStartedAt     DateTime?
   updatedAt             DateTime      @updatedAt
   createdAt             DateTime      @default(now())
+
+  // Room lifecycle
+  isPermanent           Boolean       @default(false)
+  expiresAt             DateTime?
+
+  // Relations
   queue                 QueueItem[]
   chatMessages          ChatMessage[]
+  ipLogs                RoomIpLog[]
+  videoHistory          RoomVideoHistory[]
+  activityLogs          RoomActivityLog[]
+  homeKnocks            HomeKnock[]
+
+  // Home room owner (inverse of User.homeRoom)
+  homeOwner             User?         @relation("UserHomeRoom")
 }
 
 model QueueItem {
@@ -50,6 +64,19 @@ model User {
   isPrivate       Boolean  @default(false)
   createdAt       DateTime @default(now())
 
+  // Session management
+  activeToken      String?
+
+  // Active status
+  showActiveStatus Boolean  @default(true)
+  isOnline         Boolean  @default(false)
+  lastSeenAt       DateTime?
+
+  // Home room
+  homeRoomId       String?  @unique
+  homeRoom         Room?    @relation("UserHomeRoom", fields: [homeRoomId], references: [id])
+
+  // Existing relations
   sentFriendRequests     FriendRequest[] @relation("FriendRequestsSent")
   receivedFriendRequests FriendRequest[] @relation("FriendRequestsReceived")
 
@@ -61,6 +88,11 @@ model User {
 
   sentInvites     RoomInvite[] @relation("InvitesSent")
   receivedInvites RoomInvite[] @relation("InvitesReceived")
+
+  // New relations
+  knocksSent       HomeKnock[]       @relation("KnocksSent")
+  playlists        Playlist[]
+  activityLogs     RoomActivityLog[]
 }
 
 model FriendRequest {
@@ -141,4 +173,90 @@ model ChatMessageReaction {
   createdAt     DateTime    @default(now())
 
   @@unique([messageId, participantId])
+}
+
+// ──────────────────────────────────────────────────
+// NEW MODELS
+// ──────────────────────────────────────────────────
+
+model RoomIpLog {
+  id        String   @id @default(uuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  ipAddress String
+  userId    String?
+  joinedAt  DateTime @default(now())
+
+  @@index([roomId, joinedAt])
+}
+
+model RoomVideoHistory {
+  id         String   @id @default(uuid())
+  roomId     String
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  videoId    String
+  sourceUrl  String
+  title      String
+  thumbnail  String
+  playedAt   DateTime @default(now())
+  playedById String?
+
+  @@index([roomId, playedAt])
+}
+
+model RoomActivityLog {
+  id              String    @id @default(uuid())
+  roomId          String
+  room            Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt        DateTime  @default(now())
+  leftAt          DateTime?
+  durationSeconds Int?
+
+  @@index([roomId, userId])
+}
+
+model HomeKnock {
+  id          String    @id @default(uuid())
+  homeRoomId  String
+  homeRoom    Room      @relation(fields: [homeRoomId], references: [id], onDelete: Cascade)
+  knockerId   String
+  knocker     User      @relation("KnocksSent", fields: [knockerId], references: [id], onDelete: Cascade)
+  status      String    @default("PENDING") // PENDING, ADMITTED, DISMISSED
+  knockedAt   DateTime  @default(now())
+  respondedAt DateTime?
+  seenByOwner Boolean   @default(false)
+
+  @@index([homeRoomId, knockedAt])
+  @@index([knockerId])
+}
+
+model Playlist {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  isPrivate   Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  items       PlaylistItem[]
+
+  @@index([userId])
+}
+
+model PlaylistItem {
+  id         String   @id @default(uuid())
+  playlistId String
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  videoId    String
+  title      String
+  thumbnail  String
+  duration   Int?
+  sourceUrl  String
+  order      Int      @default(0)
+  addedAt    DateTime @default(now())
+
+  @@index([playlistId, order])
 }

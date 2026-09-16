@@ -18,4 +18,13 @@ export class SignupDto {
   @IsString()
   @IsIn(['male', 'female', 'other'], { message: 'Gender must be male, female, or other.' })
   gender?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50, { message: 'Display name cannot exceed 50 characters.' })
+  displayName?: string;
+
+  @IsOptional()
+  @IsString()
+  profilePicture?: string;
 }

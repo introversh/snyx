@@ -52,6 +52,9 @@ export interface UserProfile {
   gender?: string;
   isPrivate?: boolean;
   token?: string;
+  homeRoomId?: string;
+  showActiveStatus?: boolean;
+  isOnline?: boolean | null;
 }
 
 export interface RoomState {
@@ -66,7 +69,79 @@ export interface RoomState {
   queue: QueueItem[];
   users: RoomUser[];
   chatMessages: ChatMessage[];
+  isPermanent?: boolean;
+  expiresAt?: number | null;
 }
+
+// ──────────────────────────────────────────────────
+// Knock system interfaces
+// ──────────────────────────────────────────────────
+
+export interface HomeKnockPayload {
+  targetUsername: string;
+}
+
+export interface HomeKnockIncoming {
+  knockId: string;
+  knocker: {
+    userId: string;
+    username: string;
+    displayName?: string;
+    profilePicture?: string;
+  };
+  knockedAt: number;
+}
+
+export interface HomeKnockResponse {
+  knockId: string;
+  action: 'admit' | 'wait';
+}
+
+export interface HomeKnockAdmitted {
+  knockId: string;
+  roomId: string;
+}
+
+export interface MissedKnock {
+  knockId: string;
+  knocker: {
+    userId: string;
+    username: string;
+    displayName?: string;
+    profilePicture?: string;
+  };
+  knockedAt: number;
+}
+
+// ──────────────────────────────────────────────────
+// Playlist interfaces
+// ──────────────────────────────────────────────────
+
+export interface PlaylistData {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  isPrivate?: boolean;
+  createdAt: number;
+  updatedAt: number;
+  items?: PlaylistItemData[];
+}
+
+export interface PlaylistItemData {
+  id: string;
+  videoId: string;
+  title: string;
+  thumbnail: string;
+  duration?: number;
+  sourceUrl: string;
+  order: number;
+  addedAt: number;
+}
+
+// ──────────────────────────────────────────────────
+// Socket events
+// ──────────────────────────────────────────────────
 
 export const SocketEvents = {
   ROOM_JOIN: 'room:join',
@@ -94,8 +169,22 @@ export const SocketEvents = {
   CHAT_DELIVERED: 'room:chat-delivered',
   ROOM_USER_REMOVE: 'room:user-remove',
   ROOM_USER_KICKED: 'room:user-kicked',
-  ERROR: 'room:error'
+  ERROR: 'room:error',
+
+  // Knock system
+  HOME_KNOCK: 'home:knock',
+  HOME_KNOCK_INCOMING: 'home:knock-incoming',
+  HOME_KNOCK_RESPONSE: 'home:knock-response',
+  HOME_KNOCK_ADMITTED: 'home:knock-admitted',
+  HOME_KNOCK_WAITING: 'home:knock-waiting',
+
+  // Session management
+  SESSION_FORCE_LOGOUT: 'session:force-logout',
 } as const;
+
+// ──────────────────────────────────────────────────
+// Payloads
+// ──────────────────────────────────────────────────
 
 export interface JoinRoomPayload {
   roomId: string;

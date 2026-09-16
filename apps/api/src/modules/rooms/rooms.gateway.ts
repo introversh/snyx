@@ -4,9 +4,10 @@ import {
   SubscribeMessage,
   MessageBody,
   ConnectedSocket,
-  OnGatewayDisconnect,
+  OnGatewayDisconnect, OnGatewayConnection,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { PrismaService } from '../../prisma.service';
 import { RoomsService } from './rooms.service';
 import {
   SocketEvents,
@@ -45,20 +46,77 @@ const allowedOrigins = new Set([...defaultOrigins, ...envOrigins]);
     credentials: true,
   },
 })
-export class RoomsGateway implements OnGatewayDisconnect {
+export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
   // Memory store for room participant presence
   // roomId -> participantId -> RoomUser & { socketId: string }
+
+  // roomId -> participantId -> RoomUser & { socketId: string }
   private presence = new Map<string, Map<string, RoomUser & { socketId: string }>>();
+  
+  // userId -> socketId
+  private userSockets = new Map<string, string>();
+
 
   constructor(
     private roomsService: RoomsService,
-    private authService: AuthService
+    private authService: AuthService,
+    private prisma: PrismaService
   ) {}
 
+
+  async handleConnection(client: Socket) {
+    const token = client.handshake.auth?.token;
+    if (token) {
+      try {
+        const decoded = this.authService.verifyToken(token);
+        const isValid = await this.authService.validateActiveToken(decoded.userId, token);
+        if (!isValid) {
+          client.emit(SocketEvents.SESSION_FORCE_LOGOUT);
+          client.disconnect();
+          return;
+        }
+
+        // Single device session: Force-logout any existing socket for this user
+        const oldSocketId = this.userSockets.get(decoded.userId);
+        if (oldSocketId && oldSocketId !== client.id) {
+          const oldSocket = this.server.sockets.sockets.get(oldSocketId);
+          if (oldSocket) {
+            oldSocket.emit(SocketEvents.SESSION_FORCE_LOGOUT);
+            oldSocket.disconnect();
+          }
+        }
+
+        this.userSockets.set(decoded.userId, client.id);
+        client.data.userId = decoded.userId;
+
+        // Mark user as online in DB
+        await this.prisma.user.updateMany({
+          where: { id: decoded.userId },
+          data: { isOnline: true },
+        });
+      } catch (e) {
+        client.emit(SocketEvents.SESSION_FORCE_LOGOUT);
+        client.disconnect();
+      }
+    }
+  }
+
   async handleDisconnect(client: Socket) {
+    if (client.data.activityLogId) {
+      await this.roomsService.endActivity(client.data.activityLogId);
+    }
+    if (client.data.userId) {
+      if (this.userSockets.get(client.data.userId) === client.id) {
+        this.userSockets.delete(client.data.userId);
+        await this.prisma.user.updateMany({
+          where: { id: client.data.userId },
+          data: { isOnline: false, lastSeenAt: new Date() },
+        });
+      }
+    }
     for (const [roomId, users] of this.presence.entries()) {
       for (const [participantId, user] of users.entries()) {
         if (user.socketId === client.id) {
@@ -92,6 +150,8 @@ export class RoomsGateway implements OnGatewayDisconnect {
         position: dbRoom.position,
         playbackStartedAt: dbRoom.playbackStartedAt ? dbRoom.playbackStartedAt.getTime() : null,
         serverTime: Date.now(),
+        isPermanent: dbRoom.isPermanent,
+        expiresAt: dbRoom.expiresAt ? dbRoom.expiresAt.getTime() : null,
         queue: dbRoom.queue.map((item: any) => ({
           id: item.id,
           videoId: item.videoId,
@@ -706,6 +766,117 @@ export class RoomsGateway implements OnGatewayDisconnect {
     } catch (err: any) {
       console.error(`Error editing chat message in room ${roomId}:`, err);
       client.emit(SocketEvents.ERROR, { message: err?.message || 'Failed to edit message' });
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.HOME_KNOCK)
+  async handleHomeKnock(
+    @MessageBody() payload: { targetUsername: string },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { targetUsername } = payload;
+    const knockerId = client.data.userId;
+    if (!knockerId) return;
+
+    try {
+      const targetUser = await this.prisma.user.findUnique({
+        where: { username: targetUsername.toLowerCase().trim() },
+      });
+      if (!targetUser || !targetUser.homeRoomId) return;
+
+      const knockerUser = await this.prisma.user.findUnique({ where: { id: knockerId } });
+      if (!knockerUser) return;
+
+      // Rate limit: check if a pending knock already exists within the last 60s
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
+      let knock = await this.prisma.homeKnock.findFirst({
+        where: {
+          homeRoomId: targetUser.homeRoomId,
+          knockerId: knockerId,
+          status: 'PENDING',
+          knockedAt: { gte: oneMinuteAgo },
+        },
+      });
+
+      if (!knock) {
+        knock = await this.prisma.homeKnock.create({
+          data: {
+            homeRoomId: targetUser.homeRoomId,
+            knockerId: knockerId,
+          },
+        });
+      }
+
+      if (targetUser.isOnline) {
+        const targetSocketId = this.userSockets.get(targetUser.id);
+        if (targetSocketId) {
+          this.server.to(targetSocketId).emit(SocketEvents.HOME_KNOCK_INCOMING, {
+            knockId: knock.id,
+            knocker: {
+              userId: knockerUser.id,
+              username: knockerUser.username,
+              displayName: knockerUser.displayName || undefined,
+              profilePicture: knockerUser.profilePicture || undefined,
+            },
+            knockedAt: knock.knockedAt.getTime(),
+          });
+        }
+      } else {
+        // Target is not online right now
+        client.emit(SocketEvents.HOME_KNOCK_WAITING, {
+          knockId: knock.id,
+          offline: true,
+        });
+      }
+    } catch (e) {
+      console.error('Error handling home knock:', e);
+    }
+  }
+
+  @SubscribeMessage(SocketEvents.HOME_KNOCK_RESPONSE)
+  async handleHomeKnockResponse(
+    @MessageBody() payload: { knockId: string; action: 'admit' | 'wait' },
+    @ConnectedSocket() client: Socket
+  ) {
+    const { knockId, action } = payload;
+    const ownerId = client.data.userId;
+    if (!ownerId) return;
+
+    try {
+      const knock = await this.prisma.homeKnock.findUnique({
+        where: { id: knockId },
+      });
+      if (!knock) return;
+
+      const roomOwner = await this.prisma.user.findFirst({
+        where: { homeRoomId: knock.homeRoomId },
+      });
+      if (!roomOwner || roomOwner.id !== ownerId) return;
+
+      await this.prisma.homeKnock.update({
+        where: { id: knockId },
+        data: {
+          status: action === 'admit' ? 'ADMITTED' : 'PENDING',
+          respondedAt: new Date(),
+          seenByOwner: true,
+        },
+      });
+
+      const knockerSocketId = this.userSockets.get(knock.knockerId);
+      if (knockerSocketId) {
+        if (action === 'admit') {
+          this.server.to(knockerSocketId).emit(SocketEvents.HOME_KNOCK_ADMITTED, {
+            knockId: knock.id,
+            roomId: knock.homeRoomId,
+          });
+        } else {
+          this.server.to(knockerSocketId).emit(SocketEvents.HOME_KNOCK_WAITING, {
+            knockId: knock.id,
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Error handling knock response:', e);
     }
   }
 }

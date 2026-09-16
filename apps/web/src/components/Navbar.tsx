@@ -57,7 +57,7 @@ export default function Navbar({ onNavigate, roomId, socketConnected, onOpenInbo
             <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center group-hover:scale-105 transition duration-300 shadow-md shadow-white/10">
               <Radio className="w-4.5 h-4.5 text-black animate-pulse" />
             </div>
-            <span className="text-xl font-black tracking-tight text-white">sNyx</span>
+            <span className="text-xl font-black tracking-tight text-white">Snyx</span>
           </div>
 
           {socketConnected !== undefined && (
@@ -110,11 +110,16 @@ export default function Navbar({ onNavigate, roomId, socketConnected, onOpenInbo
               className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/15 hover:border-white/30 px-3.5 py-1.5 rounded-full text-xs font-bold text-white transition duration-300 active:scale-95"
               title="View Profile Page"
             >
-              <img
-                src={getAvatarUrl(currentUser.profilePicture, currentUser.gender)}
-                alt="Avatar"
-                className="w-5 h-5 object-cover rounded-full border border-white/20 shrink-0"
-              />
+              <div className="relative">
+                <img
+                  src={getAvatarUrl(currentUser.profilePicture, currentUser.gender)}
+                  alt="Avatar"
+                  className="w-5 h-5 object-cover rounded-full border border-white/20 shrink-0"
+                />
+                {currentUser.showActiveStatus && (
+                  <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border border-black"></div>
+                )}
+              </div>
               <span className="max-w-[100px] truncate font-extrabold">@{currentUser.username}</span>
             </button>
 

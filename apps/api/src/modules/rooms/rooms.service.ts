@@ -41,6 +41,7 @@ export class RoomsService {
         id: roomId,
         isPlaying: false,
         position: 0.0,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
       },
     });
   }
@@ -329,5 +330,103 @@ export class RoomsService {
     });
 
     return updated;
+  }
+
+  async createPermanentRoom(roomName: string): Promise<Room> {
+    let roomId = this.generateRoomCode();
+    
+    let exists = await this.prisma.room.findUnique({ where: { id: roomId } });
+    let attempts = 0;
+    while (exists && attempts < 10) {
+      roomId = this.generateRoomCode();
+      exists = await this.prisma.room.findUnique({ where: { id: roomId } });
+      attempts++;
+    }
+
+    return this.prisma.room.create({
+      data: {
+        id: roomId,
+        name: roomName,
+        isPlaying: false,
+        position: 0.0,
+        isPermanent: true,
+        expiresAt: null,
+      },
+    });
+  }
+
+  async logIp(roomId: string, ipAddress: string, userId?: string) {
+    return this.prisma.roomIpLog.create({
+      data: {
+        roomId,
+        ipAddress,
+        userId: userId || null,
+      }
+    });
+  }
+
+  async logVideoPlay(roomId: string, videoId: string, title: string, thumbnail: string, playedById?: string) {
+    return this.prisma.roomVideoHistory.create({
+      data: {
+        roomId,
+        videoId,
+        title,
+        thumbnail,
+        sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+        playedById: playedById || null,
+      }
+    });
+  }
+
+  async startActivity(roomId: string, userId: string): Promise<string> {
+    const log = await this.prisma.roomActivityLog.create({
+      data: {
+        roomId,
+        userId,
+        joinedAt: new Date(),
+      }
+    });
+    return log.id;
+  }
+
+  async endActivity(activityLogId: string) {
+    const log = await this.prisma.roomActivityLog.findUnique({ where: { id: activityLogId } });
+    if (!log || log.leftAt) return;
+    
+    const leftAt = new Date();
+    const durationSeconds = Math.floor((leftAt.getTime() - log.joinedAt.getTime()) / 1000);
+    
+    return this.prisma.roomActivityLog.update({
+      where: { id: activityLogId },
+      data: {
+        leftAt,
+        durationSeconds,
+      }
+    });
+  }
+
+  async deleteExpiredRooms() {
+    return this.prisma.room.deleteMany({
+      where: {
+        isPermanent: false,
+        expiresAt: {
+          lte: new Date()
+        }
+      }
+    });
+  }
+
+  async cleanOldChatMessages() {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    return this.prisma.chatMessage.deleteMany({
+      where: {
+        createdAt: {
+          lte: thirtyDaysAgo
+        },
+        room: {
+          isPermanent: true
+        }
+      }
+    });
   }
 }

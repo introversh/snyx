@@ -1099,9 +1099,20 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
           <div className="bg-white/[0.03] border border-white/10 rounded-3xl p-5 md:p-6 shadow-xl flex flex-col gap-4 backdrop-blur-md">
             <div className="flex justify-between items-start gap-4">
               <div>
-                <h2 className="font-black text-white text-base md:text-lg line-clamp-1 leading-tight tracking-wide">
-                  {displayTitle}
-                </h2>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="font-black text-white text-base md:text-lg line-clamp-1 leading-tight tracking-wide">
+                    {displayTitle}
+                  </h2>
+                  {roomState?.isPermanent ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-mono px-2 py-0.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-300 font-bold">
+                      🏠 Home Room
+                    </span>
+                  ) : roomState?.expiresAt ? (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-mono px-2 py-0.5 rounded-full border border-white/10 bg-white/5 text-neutral-400 font-bold">
+                      ⏳ {Math.max(0, Math.ceil((roomState.expiresAt - Date.now()) / (1000 * 60 * 60 * 24)))}d left
+                    </span>
+                  ) : null}
+                </div>
                 <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-widest mt-1">
                   {displayChannel}
                 </p>
@@ -2049,7 +2060,7 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
 
       {/* Footer */}
       <footer className="text-center py-6 border-t border-white/5 text-[9px] font-mono tracking-widest text-neutral-600 bg-[#05060f]/60 backdrop-blur-md">
-        sNyx Room: {roomId} &bull; Built with Intent !
+        Snyx Room: {roomId} &bull; Built with Intent !
       </footer>
     </div>
   );
