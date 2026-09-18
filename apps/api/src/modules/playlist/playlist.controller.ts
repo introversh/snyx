@@ -103,4 +103,30 @@ export class PlaylistController {
     const userId = this.extractUserId(authHeader);
     return this.playlistService.reorderItems(id, userId, body.items);
   }
+
+  @Post(':id/save')
+  async savePlaylist(
+    @Param('id') id: string,
+    @Headers('authorization') authHeader: string
+  ) {
+    const userId = this.extractUserId(authHeader);
+    return this.playlistService.savePlaylist(userId, id);
+  }
+
+  @Delete(':id/save')
+  async unsavePlaylist(
+    @Param('id') id: string,
+    @Headers('authorization') authHeader: string
+  ) {
+    const userId = this.extractUserId(authHeader);
+    return this.playlistService.unsavePlaylist(userId, id);
+  }
+
+  @Get('user/:userId/saved')
+  async getSavedPlaylists(
+    @Param('userId') userId: string,
+    @Headers('authorization') authHeader?: string
+  ) {
+    return this.playlistService.getSavedPlaylists(userId);
+  }
 }

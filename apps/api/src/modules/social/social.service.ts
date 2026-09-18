@@ -477,4 +477,115 @@ export class SocialService {
       },
     });
   }
+
+  // Get aggregated notifications (knocks, invites, friend requests)
+  async getNotifications(currentUserId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { homeRoomId: true },
+    });
+
+    const knocks = user?.homeRoomId
+      ? await this.prisma.homeKnock.findMany({
+          where: { homeRoomId: user.homeRoomId },
+          include: {
+            knocker: {
+              select: { id: true, username: true, displayName: true, profilePicture: true, gender: true },
+            },
+          },
+          orderBy: { knockedAt: 'desc' },
+          take: 30,
+        })
+      : [];
+
+    const [invites, friendRequests] = await Promise.all([
+      this.prisma.roomInvite.findMany({
+        where: { receiverId: currentUserId },
+        include: {
+          sender: {
+            select: { id: true, username: true, displayName: true, profilePicture: true, gender: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+      this.prisma.friendRequest.findMany({
+        where: { receiverId: currentUserId, status: 'PENDING' },
+        include: {
+          sender: {
+            select: { id: true, username: true, displayName: true, profilePicture: true, gender: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+    ]);
+
+    const unseenKnocksCount = knocks.filter((k) => !k.seenByOwner).length;
+    const unreadCount = unseenKnocksCount + invites.length + friendRequests.length;
+
+    return {
+      unreadCount,
+      unseenKnocksCount,
+      knocks: knocks.map((k) => ({
+        id: k.id,
+        status: k.status,
+        knockedAt: k.knockedAt,
+        seenByOwner: k.seenByOwner,
+        knocker: k.knocker,
+        homeRoomId: k.homeRoomId,
+      })),
+      invites: invites.map((i) => ({
+        id: i.id,
+        roomId: i.roomId,
+        createdAt: i.createdAt,
+        sender: i.sender,
+      })),
+      friendRequests: friendRequests.map((fr) => ({
+        id: fr.id,
+        createdAt: fr.createdAt,
+        sender: fr.sender,
+      })),
+    };
+  }
+
+  // Mark knocks as seen
+  async markNotificationsAsRead(currentUserId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { homeRoomId: true },
+    });
+    if (user?.homeRoomId) {
+      await this.prisma.homeKnock.updateMany({
+        where: { homeRoomId: user.homeRoomId, seenByOwner: false },
+        data: { seenByOwner: true },
+      });
+    }
+    return { success: true };
+  }
+
+  // Respond to knock from notifications
+  async respondToKnock(currentUserId: string, knockId: string, action: 'admit' | 'dismiss') {
+    const user = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { homeRoomId: true },
+    });
+    if (!user?.homeRoomId) throw new NotFoundException('Home room not found');
+
+    const knock = await this.prisma.homeKnock.findFirst({
+      where: { id: knockId, homeRoomId: user.homeRoomId },
+    });
+    if (!knock) throw new NotFoundException('Knock not found');
+
+    const updated = await this.prisma.homeKnock.update({
+      where: { id: knockId },
+      data: {
+        status: action === 'admit' ? 'ADMITTED' : 'DISMISSED',
+        respondedAt: new Date(),
+        seenByOwner: true,
+      },
+    });
+
+    return { knock: updated, roomId: user.homeRoomId };
+  }
 }

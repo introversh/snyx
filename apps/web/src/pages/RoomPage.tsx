@@ -165,8 +165,9 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
   // Drag & Drop reorder index state
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
-  // Search Debounce Ref
+  // Search Debounce Ref & AbortController
   const searchTimeoutRef = useRef<number | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
 
   // Save active room ID to local storage so navigation from profile page is seamless
   useEffect(() => {
@@ -233,57 +234,82 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
     }
   };
 
-  // YouTube Search with 450ms debounce & pasted link resolver
-  useEffect(() => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    if (searchQuery.trim().length < 2) {
+  // YouTube Search with 800ms debounce, AbortController, and direct URL resolver
+  const executeRoomSearch = async (query: string) => {
+    const rawTrimmed = query.trim();
+    if (rawTrimmed.length < 3) {
       setSearchResults([]);
       setIsSearching(false);
       return;
     }
 
-    const urlMatch = searchQuery.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
-    if (urlMatch) {
-      const videoId = urlMatch[1];
-      setIsSearching(true);
-      searchTimeoutRef.current = window.setTimeout(async () => {
-        try {
-          const res = await fetch(`${API_BASE_URL}/youtube/video/${videoId}`);
-          if (res.ok) {
-            const video = await res.json();
-            setSearchResults([video]);
-          }
-        } catch (err) {
-          console.error('Error fetching video details:', err);
-        } finally {
-          setIsSearching(false);
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+
+    const urlMatch = rawTrimmed.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/);
+    const directVideoId = urlMatch ? urlMatch[1] : (/^[A-Za-z0-9_-]{11}$/.test(rawTrimmed) ? rawTrimmed : null);
+
+    setIsSearching(true);
+    try {
+      if (directVideoId) {
+        const res = await fetch(`${API_BASE_URL}/youtube/video/${directVideoId}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const video = await res.json();
+          setSearchResults([video]);
         }
-      }, 200);
+      } else {
+        const res = await fetch(`${API_BASE_URL}/youtube/search?q=${encodeURIComponent(rawTrimmed)}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.items || []);
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error('Search error:', err);
+      }
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 3) {
+      setSearchResults([]);
+      setIsSearching(false);
       return;
     }
 
+    const isUrl = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/.test(trimmed);
+    const delay = isUrl ? 50 : 800;
+
     setIsSearching(true);
-    searchTimeoutRef.current = window.setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/youtube/search?q=${encodeURIComponent(searchQuery)}`);
-        if (res.ok) {
-          const data = await res.json();
-          setSearchResults(data.items);
-        }
-      } catch (err) {
-        console.error('Search error:', err);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 450);
+    searchTimeoutRef.current = window.setTimeout(() => {
+      executeRoomSearch(searchQuery);
+    }, delay);
 
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
   }, [searchQuery]);
+
+  const handleSearchSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    executeRoomSearch(searchQuery);
+  };
 
   const clockOffsetRef = useRef<number>(0);
   useEffect(() => {
@@ -1739,19 +1765,25 @@ export default function RoomPage({ roomId, onNavigate }: RoomPageProps) {
 
             {activeSidebarTab === 'search' && (
               <div className="flex-grow flex flex-col overflow-hidden">
-                <div className="relative mb-4 shrink-0">
+                <form onSubmit={handleSearchSubmit} className="relative mb-4 shrink-0">
                   <input
                     type="text"
-                    placeholder="Search YouTube tracks..."
+                    placeholder="Search YouTube or paste link (Enter to search)..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 focus:border-white/20 text-white pl-10 pr-4 py-2.5 rounded-2xl outline-none text-xs placeholder:text-neutral-600 focus:bg-white/[0.08] transition duration-250"
+                    className="w-full bg-white/5 border border-white/10 focus:border-white/20 text-white pl-10 pr-10 py-2.5 rounded-2xl outline-none text-xs placeholder:text-neutral-600 focus:bg-white/[0.08] transition duration-250"
                   />
-                  <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-neutral-500" />
+                  <button
+                    type="submit"
+                    className="absolute left-3.5 top-3 text-neutral-500 hover:text-white transition"
+                    title="Search"
+                  >
+                    <Search className="w-4 h-4" />
+                  </button>
                   {isSearching && (
                     <RefreshCw className="absolute right-3.5 top-3.5 w-4 h-4 text-white animate-spin" />
                   )}
-                </div>
+                </form>
                 
                 <div className="flex-grow overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                   {searchResults.map((video) => (

@@ -24,7 +24,12 @@ export class PlaylistService {
         ...(isOwner ? {} : { isPrivate: false }),
       },
       orderBy: { updatedAt: 'desc' },
-      include: { _count: { select: { items: true } } },
+      include: {
+        user: {
+          select: { id: true, username: true, displayName: true, profilePicture: true, gender: true },
+        },
+        _count: { select: { items: true } },
+      },
     });
   }
 
@@ -32,6 +37,9 @@ export class PlaylistService {
     const playlist = await this.prisma.playlist.findUnique({
       where: { id: playlistId },
       include: {
+        user: {
+          select: { id: true, username: true, displayName: true, profilePicture: true, gender: true },
+        },
         items: {
           orderBy: { order: 'asc' },
         },
@@ -43,7 +51,23 @@ export class PlaylistService {
       throw new UnauthorizedException('This playlist is private');
     }
 
-    return playlist;
+    let isSaved = false;
+    if (requestingUserId) {
+      const savedRecord = await this.prisma.savedPlaylist.findUnique({
+        where: {
+          userId_playlistId: {
+            userId: requestingUserId,
+            playlistId: playlist.id,
+          },
+        },
+      });
+      isSaved = !!savedRecord;
+    }
+
+    return {
+      ...playlist,
+      isSaved,
+    };
   }
 
   async updatePlaylist(playlistId: string, userId: string, name?: string, description?: string, isPrivate?: boolean) {
@@ -114,5 +138,71 @@ export class PlaylistService {
         })
       )
     );
+  }
+
+  // Save playlist to user's home/profile
+  async savePlaylist(userId: string, playlistId: string) {
+    const playlist = await this.prisma.playlist.findUnique({
+      where: { id: playlistId },
+    });
+    if (!playlist) throw new NotFoundException('Playlist not found');
+    if (playlist.isPrivate && playlist.userId !== userId) {
+      throw new UnauthorizedException('Cannot save a private playlist');
+    }
+
+    const saved = await this.prisma.savedPlaylist.upsert({
+      where: {
+        userId_playlistId: {
+          userId,
+          playlistId,
+        },
+      },
+      create: {
+        userId,
+        playlistId,
+      },
+      update: {},
+    });
+
+    return { success: true, saved: true, savedAt: saved.savedAt };
+  }
+
+  // Unsave / remove playlist from home
+  async unsavePlaylist(userId: string, playlistId: string) {
+    await this.prisma.savedPlaylist.deleteMany({
+      where: {
+        userId,
+        playlistId,
+      },
+    });
+    return { success: true, saved: false };
+  }
+
+  // Get user's saved playlists
+  async getSavedPlaylists(userId: string) {
+    const saved = await this.prisma.savedPlaylist.findMany({
+      where: { userId },
+      orderBy: { savedAt: 'desc' },
+      include: {
+        playlist: {
+          include: {
+            user: {
+              select: { id: true, username: true, displayName: true, profilePicture: true, gender: true },
+            },
+            items: {
+              orderBy: { order: 'asc' },
+              take: 5,
+            },
+            _count: { select: { items: true } },
+          },
+        },
+      },
+    });
+
+    return saved.map((s) => ({
+      ...s.playlist,
+      savedAt: s.savedAt,
+      isSaved: true,
+    }));
   }
 }

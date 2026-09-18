@@ -129,4 +129,26 @@ export class SocialController {
     const user = this.verifyToken(auth);
     return this.socialService.declineInvite(user.userId, inviteId);
   }
+
+  @Get('notifications')
+  async getNotifications(@Headers('authorization') auth: string) {
+    const user = this.verifyToken(auth);
+    return this.socialService.getNotifications(user.userId);
+  }
+
+  @Post('notifications/mark-read')
+  async markNotificationsAsRead(@Headers('authorization') auth: string) {
+    const user = this.verifyToken(auth);
+    return this.socialService.markNotificationsAsRead(user.userId);
+  }
+
+  @Post('knocks/:knockId/respond')
+  async respondToKnock(
+    @Headers('authorization') auth: string,
+    @Param('knockId') knockId: string,
+    @Body() body: { action: 'admit' | 'dismiss' }
+  ) {
+    const user = this.verifyToken(auth);
+    return this.socialService.respondToKnock(user.userId, knockId, body.action);
+  }
 }

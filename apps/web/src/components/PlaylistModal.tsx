@@ -1,22 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { X, Play, Plus, Search, Trash2, ArrowUp, ArrowDown, Lock, Globe, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Play, Plus, Search, Trash2, ArrowUp, ArrowDown, Lock, Globe, RefreshCw, Bookmark, Radio } from 'lucide-react';
+import { getAvatarUrl } from '../pages/LandingPage';
 
 interface PlaylistModalProps {
   playlistId: string;
   isOwner: boolean;
   apiBaseUrl: string;
   onClose: () => void;
+  onNavigate?: (path: string) => void;
 }
 
-export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose }: PlaylistModalProps) {
+export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose, onNavigate }: PlaylistModalProps) {
   const [playlist, setPlaylist] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isUpdatingPrivacy, setIsUpdatingPrivacy] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPlayingInRoom, setIsPlayingInRoom] = useState(false);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const searchTimeoutRef = useRef<any>(null);
 
   let currentUser: any = null;
   try {
@@ -28,7 +35,7 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
     setLoading(true);
     try {
       const res = await fetch(`${apiBaseUrl}/playlists/${playlistId}`, {
-        headers: { 'Authorization': `Bearer ${currentUser?.token}` }
+        headers: { Authorization: `Bearer ${currentUser?.token}` }
       });
       if (res.ok) {
         const data = await res.json();
@@ -54,7 +61,7 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser?.token}`,
+          Authorization: `Bearer ${currentUser?.token}`,
         },
         body: JSON.stringify({ isPrivate: newPrivacy }),
       });
@@ -68,24 +75,101 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
     }
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    setIsSearching(true);
+  const handleToggleSave = async () => {
+    if (!currentUser || !currentUser.token || !playlist) return;
+    setIsSaving(true);
     try {
-      const res = await fetch(`${apiBaseUrl}/youtube/search?q=${encodeURIComponent(searchQuery.trim())}`, {
-        headers: { 'Authorization': `Bearer ${currentUser?.token}` }
+      const method = playlist.isSaved ? 'DELETE' : 'POST';
+      const res = await fetch(`${apiBaseUrl}/playlists/${playlistId}/save`, {
+        method,
+        headers: { Authorization: `Bearer ${currentUser.token}` },
       });
       if (res.ok) {
-        const data = await res.json();
-        const items = Array.isArray(data) ? data : (data.items || []);
-        setSearchResults(items);
+        setPlaylist({ ...playlist, isSaved: !playlist.isSaved });
+        window.dispatchEvent(new Event('snyx_playlist_update'));
       }
     } catch (e) {
       console.error(e);
     } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePlayInRoom = async () => {
+    if (!currentUser || !currentUser.token || !playlist) return;
+    setIsPlayingInRoom(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/rooms/from-playlist/${playlistId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${currentUser.token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        onClose();
+        if (onNavigate) {
+          onNavigate(`/room/${data.roomId}`);
+        } else {
+          window.location.href = `/room/${data.roomId}`;
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsPlayingInRoom(false);
+    }
+  };
+
+  const executeSearch = async (query: string) => {
+    const q = query.trim();
+    if (q.length < 3) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setIsSearching(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/youtube/search?q=${encodeURIComponent(q)}`, {
+        headers: { Authorization: `Bearer ${currentUser?.token}` },
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : data.items || [];
+        setSearchResults(items);
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        console.error(e);
+      }
+    } finally {
       setIsSearching(false);
     }
+  };
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    executeSearch(searchQuery);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    if (value.trim().length < 3) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      executeSearch(value);
+    }, 800);
   };
 
   const handleAddItem = async (video: any) => {
@@ -99,19 +183,19 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser?.token}`
+          Authorization: `Bearer ${currentUser?.token}`,
         },
         body: JSON.stringify({
           videoId,
           title,
           thumbnail,
           sourceUrl,
-        })
+        }),
       });
       if (res.ok) {
-        fetchPlaylist();
-        setSearchResults([]);
         setSearchQuery('');
+        setSearchResults([]);
+        fetchPlaylist();
       }
     } catch (e) {
       console.error(e);
@@ -122,7 +206,7 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
     try {
       const res = await fetch(`${apiBaseUrl}/playlists/${playlistId}/items/${itemId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${currentUser?.token}` }
+        headers: { Authorization: `Bearer ${currentUser?.token}` }
       });
       if (res.ok) fetchPlaylist();
     } catch (e) {
@@ -133,17 +217,25 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
   const handleReorder = async (itemId: string, direction: 'up' | 'down') => {
     if (!playlist || !playlist.items) return;
     const items = [...playlist.items];
-    const index = items.findIndex(i => i.id === itemId);
-    if (index < 0) return;
-    if (direction === 'up' && index === 0) return;
-    if (direction === 'down' && index === items.length - 1) return;
+    const index = items.findIndex((i: any) => i.id === itemId);
+    if (index === -1) return;
 
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    const temp = items[index];
-    items[index] = items[swapIndex];
-    items[swapIndex] = temp;
+    if (direction === 'up' && index > 0) {
+      const temp = items[index];
+      items[index] = items[index - 1];
+      items[index - 1] = temp;
+    } else if (direction === 'down' && index < items.length - 1) {
+      const temp = items[index];
+      items[index] = items[index + 1];
+      items[index + 1] = temp;
+    } else {
+      return;
+    }
 
-    const reordered = items.map((item, idx) => ({ ...item, order: idx }));
+    const reordered = items.map((item: any, idx: number) => ({
+      ...item,
+      order: idx,
+    }));
     setPlaylist({ ...playlist, items: reordered });
 
     try {
@@ -151,10 +243,10 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentUser?.token}`,
+          Authorization: `Bearer ${currentUser?.token}`,
         },
         body: JSON.stringify({
-          items: reordered.map(i => ({ id: i.id, order: i.order })),
+          items: reordered.map((item: any) => ({ id: item.id, order: item.order })),
         }),
       });
     } catch (e) {
@@ -180,7 +272,7 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
         
         {/* Header */}
         <div className="flex justify-between items-start p-6 border-b border-white/10 shrink-0">
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <h3 className="font-extrabold text-white text-lg">{playlist.name}</h3>
               {isOwner ? (
@@ -200,11 +292,58 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
                 </span>
               )}
             </div>
+
+            {/* Creator Attribution */}
+            {playlist.user && (
+              <div className="flex items-center gap-2 text-xs text-neutral-400">
+                <img
+                  src={getAvatarUrl(playlist.user.profilePicture, playlist.user.gender)}
+                  alt="Avatar"
+                  className="w-4 h-4 rounded-full border border-white/20 object-cover"
+                />
+                <span>
+                  By <span className="text-white font-bold">@{playlist.user.username}</span>
+                  {playlist.user.displayName && ` (${playlist.user.displayName})`}
+                </span>
+              </div>
+            )}
+
             {playlist.description && <p className="text-xs text-neutral-400">{playlist.description}</p>}
           </div>
-          <button onClick={onClose} className="p-2 text-neutral-400 hover:text-white bg-white/5 rounded-full transition">
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center gap-2">
+            {/* Play in New Room Button */}
+            <button
+              onClick={handlePlayInRoom}
+              disabled={isPlayingInRoom || !playlist.items || playlist.items.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-black hover:bg-neutral-200 rounded-xl text-xs font-bold transition disabled:opacity-50"
+              title="Open all playlist tracks in a new watch party room"
+            >
+              <Radio className="w-3.5 h-3.5" />
+              <span>{isPlayingInRoom ? 'Creating...' : 'Play in Room'}</span>
+            </button>
+
+            {/* Take to Home / Saved to Home Button */}
+            {!isOwner && (
+              <button
+                onClick={handleToggleSave}
+                disabled={isSaving}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition border ${
+                  playlist.isSaved
+                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30'
+                    : 'bg-white/10 text-white border-white/15 hover:bg-white/20'
+                }`}
+                title={playlist.isSaved ? 'Remove from saved playlists' : 'Save this playlist to your profile'}
+              >
+                <Bookmark className="w-3.5 h-3.5" />
+                <span>{playlist.isSaved ? 'Saved to Home' : 'Take to Home'}</span>
+              </button>
+            )}
+
+            <button onClick={onClose} className="p-2 text-neutral-400 hover:text-white bg-white/5 rounded-full transition">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -212,20 +351,20 @@ export default function PlaylistModal({ playlistId, isOwner, apiBaseUrl, onClose
           {isOwner && (
             <div className="bg-white/5 border border-white/10 p-4 rounded-2xl space-y-3">
               <h4 className="text-[10px] uppercase font-mono text-neutral-400 font-bold">Add to Playlist</h4>
-              <form onSubmit={handleSearch} className="flex gap-2">
+              <form onSubmit={handleSearchSubmit} className="flex gap-2">
                 <div className="relative flex-1">
                   <input 
                     type="text" 
-                    placeholder="Search YouTube..." 
+                    placeholder="Search YouTube or paste URL..." 
                     value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
+                    onChange={(e) => handleSearchChange(e.target.value)}
                     className="w-full bg-black border border-white/10 pl-9 pr-3 py-2 rounded-xl text-xs text-white focus:border-white/20 outline-none"
                   />
                   <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-2.5" />
                 </div>
                 <button 
                   type="submit" 
-                  disabled={isSearching}
+                  disabled={isSearching || searchQuery.trim().length < 2}
                   className="px-4 py-2 bg-white text-black text-xs font-bold rounded-xl hover:bg-neutral-200 transition disabled:opacity-50"
                 >
                   {isSearching ? 'Searching...' : 'Search'}

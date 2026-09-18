@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Radio, MessageCircle, LogOut, Share2, Check } from 'lucide-react';
+import { Radio, MessageCircle, LogOut, Share2, Check, Bell } from 'lucide-react';
 import { getAvatarUrl } from '../pages/LandingPage';
 
 interface NavbarProps {
@@ -7,27 +7,73 @@ interface NavbarProps {
   roomId?: string;
   socketConnected?: boolean;
   onOpenInbox: () => void;
+  onOpenNotifications?: () => void;
 }
 
-export default function Navbar({ onNavigate, roomId, socketConnected, onOpenInbox }: NavbarProps) {
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
+
+export default function Navbar({ onNavigate, roomId, socketConnected, onOpenInbox, onOpenNotifications }: NavbarProps) {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [copied, setCopied] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+
+  const fetchUnread = async (token: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/social/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUnreadNotifications(data.unreadCount || 0);
+      }
+    } catch {}
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem('snyx_user');
     if (stored) {
       try {
-        setCurrentUser(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        setCurrentUser(parsed);
+        if (parsed.token) fetchUnread(parsed.token);
       } catch (e) {}
     }
 
     const handleAuthChange = () => {
       const u = localStorage.getItem('snyx_user');
-      setCurrentUser(u ? JSON.parse(u) : null);
+      const parsed = u ? JSON.parse(u) : null;
+      setCurrentUser(parsed);
+      if (parsed?.token) fetchUnread(parsed.token);
+    };
+
+    const handleNotificationUpdate = () => {
+      const u = localStorage.getItem('snyx_user');
+      if (u) {
+        try {
+          const parsed = JSON.parse(u);
+          if (parsed.token) fetchUnread(parsed.token);
+        } catch {}
+      }
     };
 
     window.addEventListener('snyx_auth_change', handleAuthChange);
-    return () => window.removeEventListener('snyx_auth_change', handleAuthChange);
+    window.addEventListener('snyx_notification_update', handleNotificationUpdate);
+
+    const interval = setInterval(() => {
+      const u = localStorage.getItem('snyx_user');
+      if (u) {
+        try {
+          const parsed = JSON.parse(u);
+          if (parsed.token) fetchUnread(parsed.token);
+        } catch {}
+      }
+    }, 6000);
+
+    return () => {
+      window.removeEventListener('snyx_auth_change', handleAuthChange);
+      window.removeEventListener('snyx_notification_update', handleNotificationUpdate);
+      clearInterval(interval);
+    };
   }, []);
 
   const handleCopyLink = () => {
@@ -94,6 +140,26 @@ export default function Navbar({ onNavigate, roomId, socketConnected, onOpenInbo
                 </button>
               </>
             )}
+
+            {/* Notifications Bell Button */}
+            <button
+              onClick={() => {
+                if (onOpenNotifications) {
+                  onOpenNotifications();
+                } else {
+                  window.dispatchEvent(new Event('snyx_open_notifications'));
+                }
+              }}
+              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/15 rounded-full text-slate-200 hover:text-white transition duration-300 relative"
+              title="Notifications"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotifications > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white font-mono text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center border-2 border-black animate-pulse">
+                  {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                </span>
+              )}
+            </button>
 
             {/* Inbox / Friend Requests Button */}
             <button

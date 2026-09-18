@@ -429,4 +429,64 @@ export class RoomsService {
       }
     });
   }
+
+  async createRoomFromPlaylist(playlistId: string, userId: string): Promise<Room> {
+    const playlist = await this.prisma.playlist.findUnique({
+      where: { id: playlistId },
+      include: {
+        items: {
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    if (!playlist) {
+      throw new NotFoundException('Playlist not found');
+    }
+
+    let roomId = this.generateRoomCode();
+    let exists = await this.prisma.room.findUnique({ where: { id: roomId } });
+    let attempts = 0;
+    while (exists && attempts < 10) {
+      roomId = this.generateRoomCode();
+      exists = await this.prisma.room.findUnique({ where: { id: roomId } });
+      attempts++;
+    }
+
+    const firstItem = playlist.items[0];
+    const room = await this.prisma.room.create({
+      data: {
+        id: roomId,
+        name: playlist.name,
+        currentVideoId: firstItem ? firstItem.videoId : null,
+        currentVideoTitle: firstItem ? firstItem.title : null,
+        currentVideoThumbnail: firstItem ? firstItem.thumbnail : null,
+        isPlaying: !!firstItem,
+        position: 0.0,
+        playbackStartedAt: firstItem ? new Date() : null,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+      },
+    });
+
+    if (playlist.items.length > 0) {
+      await this.prisma.queueItem.createMany({
+        data: playlist.items.map((item, idx) => ({
+          roomId: room.id,
+          videoId: item.videoId,
+          title: item.title,
+          thumbnail: item.thumbnail,
+          channelTitle: '',
+          duration: item.duration || null,
+          addedBy: userId,
+          order: idx,
+        })),
+      });
+
+      if (firstItem) {
+        await this.logVideoPlay(room.id, firstItem.videoId, firstItem.title, firstItem.thumbnail, userId);
+      }
+    }
+
+    return room;
+  }
 }

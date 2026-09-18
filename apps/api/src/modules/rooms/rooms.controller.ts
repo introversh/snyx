@@ -1,9 +1,13 @@
-import { Controller, Post, Get, Param, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, Headers, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { RoomsService } from './rooms.service';
+import { AuthService } from '../auth/auth.service';
 
 @Controller('rooms')
 export class RoomsController {
-  constructor(private roomsService: RoomsService) {}
+  constructor(
+    private roomsService: RoomsService,
+    private authService: AuthService,
+  ) {}
 
   @Post()
   async createRoom() {
@@ -13,6 +17,22 @@ export class RoomsController {
       isPlaying: room.isPlaying,
       position: room.position,
       queue: [],
+    };
+  }
+
+  @Post('from-playlist/:id')
+  async createRoomFromPlaylist(
+    @Param('id') playlistId: string,
+    @Headers('authorization') authHeader: string
+  ) {
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
+    if (!token) throw new UnauthorizedException('Authentication required');
+    const decoded = this.authService.verifyToken(token);
+    const room = await this.roomsService.createRoomFromPlaylist(playlistId, decoded.userId);
+    return {
+      roomId: room.id,
+      isPlaying: room.isPlaying,
+      position: room.position,
     };
   }
 

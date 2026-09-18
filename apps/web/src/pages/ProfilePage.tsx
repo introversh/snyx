@@ -692,7 +692,8 @@ export default function ProfilePage({ username, onNavigate }: ProfilePageProps) 
                 <PlaylistSection 
                   userId={user.id} 
                   isOwnProfile={isOwnProfile} 
-                  apiBaseUrl={API_BASE_URL} 
+                  apiBaseUrl={API_BASE_URL}
+                  onNavigate={onNavigate}
                 />
 
               </div>

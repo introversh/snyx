@@ -4,10 +4,12 @@ import RoomPage from './pages/RoomPage';
 import ProfilePage from './pages/ProfilePage';
 import KnockWaitingPage from './pages/KnockWaitingPage';
 import KnockPopup from './components/KnockPopup';
+import NotificationsModal from './components/NotificationsModal';
 import { io, Socket } from 'socket.io-client';
 import { SocketEvents, HomeKnockIncoming } from '@youtube-together/shared';
 
 const SOCKET_URL = (import.meta as any).env?.VITE_SOCKET_URL || 'http://localhost:3000';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3000';
 
 function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
@@ -25,6 +27,7 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(checkUserLoggedIn);
   const [knockIncoming, setKnockIncoming] = useState<HomeKnockIncoming | null>(null);
   const [globalSocket, setGlobalSocket] = useState<Socket | null>(null);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -39,9 +42,13 @@ function App() {
     };
     window.addEventListener('snyx_auth_change', handleAuthChange);
 
+    const handleOpenNotifications = () => setIsNotificationsOpen(true);
+    window.addEventListener('snyx_open_notifications', handleOpenNotifications);
+
     return () => {
       window.removeEventListener('popstate', handleLocationChange);
       window.removeEventListener('snyx_auth_change', handleAuthChange);
+      window.removeEventListener('snyx_open_notifications', handleOpenNotifications);
     };
   }, []);
 
@@ -65,6 +72,7 @@ function App() {
 
     socket.on(SocketEvents.HOME_KNOCK_INCOMING, (payload: HomeKnockIncoming) => {
       setKnockIncoming(payload);
+      window.dispatchEvent(new Event('snyx_notification_update'));
     });
 
     socket.on(SocketEvents.SESSION_FORCE_LOGOUT, () => {
@@ -139,6 +147,12 @@ function App() {
           onClose={() => setKnockIncoming(null)} 
         />
       )}
+      <NotificationsModal
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        onNavigate={navigateTo}
+        apiBaseUrl={API_BASE_URL}
+      />
     </>
   );
 }

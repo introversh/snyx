@@ -834,11 +834,16 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
           data: {
             homeRoomId: targetUser.homeRoomId,
             knockerId: knockerId,
+            seenByOwner: false,
           },
         });
       }
 
-      if (targetUser.isOnline) {
+      // Check active live socket connections for target user
+      const targetSockets = await this.server.in(`user:${targetUser.id}`).fetchSockets();
+      const isOnline = targetSockets.length > 0 || targetUser.isOnline;
+
+      if (isOnline && targetSockets.length > 0) {
         this.server.to(`user:${targetUser.id}`).emit(SocketEvents.HOME_KNOCK_INCOMING, {
           knockId: knock.id,
           knocker: {
@@ -848,6 +853,12 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
             profilePicture: knockerUser.profilePicture || undefined,
           },
           knockedAt: knock.knockedAt.getTime(),
+        });
+
+        // Inform knocker that knock was sent and is awaiting response
+        client.emit(SocketEvents.HOME_KNOCK_WAITING, {
+          knockId: knock.id,
+          offline: false,
         });
       } else {
         // Target is not online right now
@@ -898,6 +909,7 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
       } else {
         this.server.to(`user:${knock.knockerId}`).emit(SocketEvents.HOME_KNOCK_WAITING, {
           knockId: knock.id,
+          offline: false,
         });
       }
     } catch (e) {

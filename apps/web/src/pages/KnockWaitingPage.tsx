@@ -58,12 +58,6 @@ export default function KnockWaitingPage({ username, onNavigate }: KnockWaitingP
         const data = await res.json();
         if (!isMounted) return;
         setTargetUser(data);
-        
-        if (!data.isOnline) {
-          setKnockState('offline');
-          setLoading(false);
-          return;
-        }
 
         const socket = io(SOCKET_URL, {
           auth: { token: currentUser.token },
