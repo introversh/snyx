@@ -52,20 +52,13 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
 
   // Memory store for room participant presence
   // roomId -> participantId -> RoomUser & { socketId: string }
-
-  // roomId -> participantId -> RoomUser & { socketId: string }
   private presence = new Map<string, Map<string, RoomUser & { socketId: string }>>();
-  
-  // userId -> socketId
-  private userSockets = new Map<string, string>();
-
 
   constructor(
     private roomsService: RoomsService,
     private authService: AuthService,
     private prisma: PrismaService
   ) {}
-
 
   async handleConnection(client: Socket) {
     const token = client.handshake.auth?.token;
@@ -75,22 +68,25 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
         const isValid = await this.authService.validateActiveToken(decoded.userId, token);
         if (!isValid) {
           client.emit(SocketEvents.SESSION_FORCE_LOGOUT);
-          client.disconnect();
+          client.disconnect(true);
           return;
         }
 
-        // Single device session: Force-logout any existing socket for this user
-        const oldSocketId = this.userSockets.get(decoded.userId);
-        if (oldSocketId && oldSocketId !== client.id) {
-          const oldSocket = this.server.sockets.sockets.get(oldSocketId);
-          if (oldSocket) {
-            oldSocket.emit(SocketEvents.SESSION_FORCE_LOGOUT);
-            oldSocket.disconnect();
+        client.data.userId = decoded.userId;
+        client.data.token = token;
+
+        // Join personal user room for targeted notifications & knocks
+        client.join(`user:${decoded.userId}`);
+
+        // Single device session enforcement:
+        // Force-logout any existing sockets for this user that carry an older/different token
+        const existingSockets = await this.server.in(`user:${decoded.userId}`).fetchSockets();
+        for (const existingSocket of existingSockets) {
+          if (existingSocket.id !== client.id && existingSocket.data?.token && existingSocket.data.token !== token) {
+            existingSocket.emit(SocketEvents.SESSION_FORCE_LOGOUT);
+            existingSocket.disconnect(true);
           }
         }
-
-        this.userSockets.set(decoded.userId, client.id);
-        client.data.userId = decoded.userId;
 
         // Mark user as online in DB
         await this.prisma.user.updateMany({
@@ -99,7 +95,7 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
         });
       } catch (e) {
         client.emit(SocketEvents.SESSION_FORCE_LOGOUT);
-        client.disconnect();
+        client.disconnect(true);
       }
     }
   }
@@ -107,16 +103,22 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
   async handleDisconnect(client: Socket) {
     if (client.data.activityLogId) {
       await this.roomsService.endActivity(client.data.activityLogId);
+      client.data.activityLogId = null;
     }
+
     if (client.data.userId) {
-      if (this.userSockets.get(client.data.userId) === client.id) {
-        this.userSockets.delete(client.data.userId);
-        await this.prisma.user.updateMany({
-          where: { id: client.data.userId },
-          data: { isOnline: false, lastSeenAt: new Date() },
-        });
-      }
+      try {
+        const remainingSockets = await this.server.in(`user:${client.data.userId}`).fetchSockets();
+        const otherSockets = remainingSockets.filter(s => s.id !== client.id);
+        if (otherSockets.length === 0) {
+          await this.prisma.user.updateMany({
+            where: { id: client.data.userId },
+            data: { isOnline: false, lastSeenAt: new Date() },
+          });
+        }
+      } catch (e) {}
     }
+
     for (const [roomId, users] of this.presence.entries()) {
       for (const [participantId, user] of users.entries()) {
         if (user.socketId === client.id) {
@@ -258,6 +260,20 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
       client.join(cleanRoomId);
       console.log(`User [${verifiedDisplayName}] joined room [${cleanRoomId}]`);
 
+      // Log room IP
+      const ipAddress = (client.handshake.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || client.handshake.address || 'unknown';
+      try {
+        await this.roomsService.logIp(cleanRoomId, ipAddress, verifiedUserId);
+      } catch (e) {}
+
+      // Start user room activity tracking
+      if (verifiedUserId) {
+        try {
+          const activityId = await this.roomsService.startActivity(cleanRoomId, verifiedUserId);
+          client.data.activityLogId = activityId;
+        } catch (e) {}
+      }
+
       // Broadcast updated room state
       await this.broadcastRoomState(cleanRoomId);
     } catch (err) {
@@ -272,6 +288,11 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
   ) {
     const { roomId, participantId } = payload;
     const cleanRoomId = roomId.toUpperCase().trim();
+
+    if (client.data.activityLogId) {
+      await this.roomsService.endActivity(client.data.activityLogId);
+      client.data.activityLogId = null;
+    }
 
     const roomUsers = this.presence.get(cleanRoomId);
     if (roomUsers) {
@@ -359,6 +380,16 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
       title,
       thumbnail
     );
+
+    try {
+      await this.roomsService.logVideoPlay(
+        cleanRoomId,
+        videoId,
+        title,
+        thumbnail,
+        client.data.userId || null
+      );
+    } catch (e) {}
 
     await this.broadcastRoomState(cleanRoomId);
   }
@@ -808,19 +839,16 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
       }
 
       if (targetUser.isOnline) {
-        const targetSocketId = this.userSockets.get(targetUser.id);
-        if (targetSocketId) {
-          this.server.to(targetSocketId).emit(SocketEvents.HOME_KNOCK_INCOMING, {
-            knockId: knock.id,
-            knocker: {
-              userId: knockerUser.id,
-              username: knockerUser.username,
-              displayName: knockerUser.displayName || undefined,
-              profilePicture: knockerUser.profilePicture || undefined,
-            },
-            knockedAt: knock.knockedAt.getTime(),
-          });
-        }
+        this.server.to(`user:${targetUser.id}`).emit(SocketEvents.HOME_KNOCK_INCOMING, {
+          knockId: knock.id,
+          knocker: {
+            userId: knockerUser.id,
+            username: knockerUser.username,
+            displayName: knockerUser.displayName || undefined,
+            profilePicture: knockerUser.profilePicture || undefined,
+          },
+          knockedAt: knock.knockedAt.getTime(),
+        });
       } else {
         // Target is not online right now
         client.emit(SocketEvents.HOME_KNOCK_WAITING, {
@@ -862,18 +890,15 @@ export class RoomsGateway implements OnGatewayDisconnect, OnGatewayConnection {
         },
       });
 
-      const knockerSocketId = this.userSockets.get(knock.knockerId);
-      if (knockerSocketId) {
-        if (action === 'admit') {
-          this.server.to(knockerSocketId).emit(SocketEvents.HOME_KNOCK_ADMITTED, {
-            knockId: knock.id,
-            roomId: knock.homeRoomId,
-          });
-        } else {
-          this.server.to(knockerSocketId).emit(SocketEvents.HOME_KNOCK_WAITING, {
-            knockId: knock.id,
-          });
-        }
+      if (action === 'admit') {
+        this.server.to(`user:${knock.knockerId}`).emit(SocketEvents.HOME_KNOCK_ADMITTED, {
+          knockId: knock.id,
+          roomId: knock.homeRoomId,
+        });
+      } else {
+        this.server.to(`user:${knock.knockerId}`).emit(SocketEvents.HOME_KNOCK_WAITING, {
+          knockId: knock.id,
+        });
       }
     } catch (e) {
       console.error('Error handling knock response:', e);
